@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lügen — Multiplayer Card Game</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    .card { width: 64px; height: 90px; user-select: none; }
+    .card-face { background: #fff; border: 1px solid #d1d5db; }
+    .card-back {
+      background: repeating-linear-gradient(45deg, #1e3a8a, #1e3a8a 6px, #4338ca 6px, #4338ca 12px);
+      border: 2px solid #fff;
+    }
+    .selected { transform: translateY(-14px); box-shadow: 0 0 0 3px #facc15; }
+    .pulse-ring { animation: pulse 1.4s infinite; }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.7); }
+      50%      { box-shadow: 0 0 0 12px rgba(250, 204, 21, 0); }
+    }
+    .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-emerald-900 via-green-800 to-emerald-950 min-h-screen text-white">
+
+<!-- ============ SETTINGS (gear, top-right) ============ -->
+<div id="settingsContainer" class="hidden fixed top-4 right-4 z-40">
+  <button id="settingsBtn" class="bg-black/40 hover:bg-black/60 backdrop-blur p-3 rounded-full transition shadow-lg" title="Settings" aria-label="Settings">
+    <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+      <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/>
+    </svg>
+  </button>
+  <div id="settingsMenu" class="hidden absolute right-0 mt-2 w-60 bg-black/90 backdrop-blur rounded-lg shadow-2xl border border-white/10 overflow-hidden">
+    <div class="px-4 py-2 text-xs uppercase tracking-wider text-emerald-300 border-b border-white/10">Game Settings</div>
+    <button id="endGameBtn" class="hidden w-full text-left px-4 py-3 hover:bg-red-600/30 transition flex items-center gap-2">
+      <span>🛑</span><span>End Game (back to lobby)</span>
+    </button>
+    <button id="leaveBtn" class="w-full text-left px-4 py-3 hover:bg-red-600/30 transition flex items-center gap-2 border-t border-white/10">
+      <span>🚪</span><span>Leave Room</span>
+    </button>
+  </div>
+</div>
+
+<!-- ============ LOBBY ============ -->
+<div id="lobby" class="max-w-md mx-auto pt-20 px-4">
+  <h1 class="text-6xl font-extrabold text-center mb-2 tracking-tight">🎴 Lügen</h1>
+  <p class="text-center text-emerald-200 mb-8">The bluffing card game · 2–8 players</p>
+  <div class="bg-black/40 backdrop-blur p-6 rounded-2xl space-y-4 shadow-xl">
+    <input id="playerName" type="text" maxlength="20" placeholder="Your name"
+      class="w-full px-4 py-3 rounded-lg bg-white/10 border border-white/20 placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-yellow-400" />
+    <button id="createBtn"
+      class="w-full bg-blue-600 hover:bg-blue-700 transition py-3 rounded-lg font-bold">Create Room</button>
+    <div class="flex items-center gap-2 text-white/60 text-sm">
+      <div class="flex-1 border-t border-white/20"></div><span>or</span><div class="flex-1 border-t border-white/20"></div>
+    </div>
+    <div class="flex gap-2">
+      <input id="roomCodeInput" type="text" maxlength="5" placeholder="ROOM CODE"
+        class="flex-1 px-4 py-3 rounded-lg bg-white/10 border border-white/20 placeholder-white/50 uppercase tracking-widest focus:outline-none focus:ring-2 focus:ring-yellow-400" />
+      <button id="joinBtn" class="bg-green-600 hover:bg-green-700 transition px-6 rounded-lg font-bold">Join</button>
+    </div>
+    <div id="errorMsg" class="text-red-300 text-sm text-center min-h-[1.25rem]"></div>
+  </div>
+  <details class="mt-6 bg-black/30 rounded-xl p-4 text-sm">
+    <summary class="cursor-pointer font-bold">How to play</summary>
+    <ul class="mt-3 space-y-1 list-disc list-inside text-emerald-100">
+      <li>The first player picks a Target Rank (e.g. Aces).</li>
+      <li>On your turn, play 1–3 cards face down claiming they match the rank.</li>
+      <li>Only the next player may call <b>LIAR!</b></li>
+      <li>If they were lying → liar takes the pile, challenger starts the next round.</li>
+      <li>If they told the truth → challenger takes the pile, is skipped, the player after them starts.</li>
+      <li>Hold all 4 Jacks → instant loss for you, everyone else wins.</li>
+      <li>Hold all 4 of any other rank → discard them (revealed for 15s).</li>
+    </ul>
+  </details>
+</div>
+
+<!-- ============ WAITING ROOM ============ -->
+<div id="waitingRoom" class="hidden max-w-2xl mx-auto pt-12 px-4">
+  <h2 class="text-3xl font-bold mb-1">Waiting Room</h2>
+  <p class="text-emerald-200 mb-6">Room code: <span id="roomCode" class="font-mono text-2xl bg-black/40 px-3 py-1 rounded ml-2"></span></p>
+  <div id="playerList" class="bg-black/40 p-4 rounded-xl space-y-2 mb-4"></div>
+  <button id="startBtn" class="w-full bg-purple-600 hover:bg-purple-700 transition py-3 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed">Start Game</button>
+  <p id="hostHint" class="text-center text-xs text-emerald-200 mt-2"></p>
+</div>
+
+<!-- ============ GAME ============ -->
+<div id="game" class="hidden p-4">
+  <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 max-w-7xl mx-auto">
+
+    <div class="lg:col-span-9">
+      <!-- Opponents -->
+      <div id="opponents" class="flex flex-wrap gap-3 justify-center mb-6"></div>
+
+      <!-- Center area: target / pile / reveal -->
+      <div class="bg-black/30 rounded-2xl p-6 text-center border border-white/10">
+        <div class="text-xs uppercase tracking-widest text-yellow-300">Current Target Rank</div>
+        <div id="targetRank" class="text-7xl font-extrabold my-2">—</div>
+        <div class="text-sm text-emerald-200">Pile: <span id="pileSize" class="font-bold">0</span> cards</div>
+        <div id="lastPlayInfo" class="mt-2 text-yellow-200 text-sm min-h-[1.25rem]"></div>
+        <div id="revealArea" class="mt-4 flex flex-wrap justify-center gap-2 min-h-[100px]"></div>
+      </div>
+
+      <!-- Turn indicator -->
+      <div class="text-center mt-4">
+        <span id="turnIndicator" class="inline-block bg-yellow-500 text-black px-5 py-2 rounded-full font-bold pulse-ring"></span>
+      </div>
+
+      <!-- Player hand -->
+      <div class="mt-6">
+        <div class="text-sm mb-2 text-emerald-200">Your Hand (<span id="handCount">0</span>) — click to select up to 3</div>
+        <div id="hand" class="flex flex-wrap gap-2 justify-center"></div>
+      </div>
+
+      <!-- Actions -->
+      <div class="mt-5 flex flex-col items-center gap-3">
+        <div id="rankPicker" class="hidden w-full">
+          <div class="text-xs text-emerald-200 mb-2 text-center">Select 1–3 cards, then click the rank you're claiming:</div>
+          <div id="rankButtons" class="flex flex-wrap gap-1 justify-center"></div>
+        </div>
+        <div class="flex flex-wrap gap-2 justify-center items-center">
+          <button id="playBtn" class="hidden bg-blue-600 hover:bg-blue-700 transition px-6 py-2 rounded-lg font-bold disabled:opacity-40 disabled:cursor-not-allowed">Play Selected</button>
+          <button id="liarBtn" class="bg-red-600 hover:bg-red-700 transition px-6 py-2 rounded-lg font-bold disabled:opacity-40 disabled:cursor-not-allowed">🚨 LIAR!</button>
+          <button id="fourBtn" class="bg-amber-500 hover:bg-amber-600 text-black transition px-6 py-2 rounded-lg font-bold hidden">Discard 4-of-a-Kind</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar: log + chat -->
+    <div class="lg:col-span-3 flex flex-col gap-4">
+      <div class="bg-black/40 p-4 rounded-xl">
+        <h3 class="font-bold mb-2 text-emerald-200">Game Log</h3>
+        <div id="log" class="text-xs space-y-1 h-64 overflow-y-auto scrollbar-thin"></div>
+      </div>
+      <div class="bg-black/40 p-4 rounded-xl">
+        <h3 class="font-bold mb-2 text-emerald-200">Chat</h3>
+        <div id="chat" class="text-xs space-y-1 h-32 overflow-y-auto scrollbar-thin mb-2"></div>
+        <input id="chatInput" type="text" maxlength="200" placeholder="Type a message…"
+          class="w-full px-2 py-1 rounded bg-white/10 border border-white/20 text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400" />
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ GAME OVER ============ -->
+<div id="gameOver" class="hidden fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-50 p-4">
+  <div class="bg-gradient-to-br from-purple-700 via-pink-600 to-rose-600 p-10 rounded-2xl text-center max-w-md shadow-2xl">
+    <h2 id="gameOverTitle" class="text-5xl font-extrabold mb-4">Game Over!</h2>
+    <div id="gameOverText" class="text-xl mb-6"></div>
+    <button onclick="location.reload()" class="bg-white text-purple-700 px-8 py-3 rounded-lg font-bold hover:bg-purple-50 transition">Play Again</button>
+  </div>
+</div>
+
+<script src="/client.js"></script>
+</body>
+</html>
