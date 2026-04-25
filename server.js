@@ -115,6 +115,26 @@ function nextPlayerIdx(room, fromIdx) {
   return (fromIdx + 1) % room.players.length;
 }
 
+// Walk forward from fromIdx, skipping disconnected players silently and
+// consuming isSkipped flags (with a log line). Returns the next active idx,
+// or fromIdx if no one else is active (safety fallback).
+function findNextActiveIdx(room, fromIdx) {
+  let idx = fromIdx;
+  for (let i = 0; i < room.players.length + 1; i++) {
+    idx = (idx + 1) % room.players.length;
+    const p = room.players[idx];
+    if (!p.connected) continue;
+    if (p.hand.length === 0) continue; // already finished — sitting out as a winner
+    if (p.isSkipped) {
+      p.isSkipped = false;
+      room.log.push(`${p.name} is skipped this turn.`);
+      continue;
+    }
+    return idx;
+  }
+  return fromIdx;
+}
+
 function checkInstantLoss(room) {
   for (const p of room.players) {
     if (p.hand.filter(c => c.rank === 'J').length === 4) {
@@ -216,6 +236,7 @@ io.on('connection', (socket) => {
     if (room.targetRank !== null) return emitError('Target rank already set.');
     if (room.players[room.currentTurnIdx].id !== socket.id) return emitError('Not your turn.');
     if (!RANKS.includes(targetRank)) return emitError('Invalid rank.');
+    if (targetRank === 'J') return emitError('Jacks cannot be the target rank - bluff with them instead.');
     room.targetRank = targetRank;
     room.log.push(`${room.players[room.currentTurnIdx].name} sets Target Rank to ${targetRank}.`);
     playCards(room, socket, cardIds);
@@ -248,13 +269,11 @@ io.on('connection', (socket) => {
     room.lastPlayCount = playedCards.length;
     room.lastPlayerId = player.id;
     room.log.push(`${player.name} plays ${playedCards.length} card(s) claiming ${room.targetRank}.`);
-
-    let nextIdx = nextPlayerIdx(room, room.currentTurnIdx);
-    if (room.players[nextIdx].isSkipped) {
-      room.players[nextIdx].isSkipped = false;
-      room.log.push(`${room.players[nextIdx].name} is skipped this turn.`);
-      nextIdx = nextPlayerIdx(room, nextIdx);
+    if (player.hand.length === 0) {
+      room.log.push(`🏆 ${player.name} emptied their hand and wins! Play continues without them (they can still be called LIAR on this play).`);
     }
+
+    const nextIdx = findNextActiveIdx(room, room.currentTurnIdx);
     room.currentTurnIdx = nextIdx;
     room.canChallengeId = room.players[nextIdx].id;
 
@@ -295,7 +314,7 @@ io.on('connection', (socket) => {
       challenger.hand.push(...room.pile);
       const challengerIdx = room.players.findIndex(p => p.id === challenger.id);
       clearPile(room);
-      room.currentTurnIdx = nextPlayerIdx(room, challengerIdx);
+      room.currentTurnIdx = findNextActiveIdx(room, challengerIdx);
       room.log.push(`${challenger.name} falsely accused ${lastPlayer.name}, takes the pile (${takenCount} cards) and is skipped - ${room.players[room.currentTurnIdx].name} starts the new round.`);
     }
 
@@ -308,6 +327,7 @@ io.on('connection', (socket) => {
     const room = rooms[currentRoomId];
     if (!room || !room.started || room.gameOver) return;
     if (!RANKS.includes(rank)) return emitError('Invalid rank.');
+    if (rank === 'J') return emitError('You cannot discard four Jacks.');
     const player = room.players.find(p => p.id === socket.id);
     if (!player) return;
     const matching = player.hand.filter(c => c.rank === rank);
@@ -344,6 +364,47 @@ io.on('connection', (socket) => {
     broadcast(room);
   });
 
+  socket.on('playAgain', () => {
+    const room = rooms[currentRoomId];
+    if (!room) return;
+    if (!room.gameOver) return; // only resets when the game has finished
+    room.started = false;
+    room.gameOver = false;
+    room.winners = [];
+    room.loser = null;
+    room.currentTurnIdx = 0;
+    room.revealedFour = null;
+    room.players.forEach(p => { p.hand = []; p.isSkipped = false; });
+    clearPile(room);
+    // Drop disconnected players - they didn't come back for a rematch.
+    room.players = room.players.filter(p => p.connected);
+    if (room.players.length === 0) { delete rooms[room.id]; return; }
+    if (!room.players.find(p => p.id === room.hostId)) {
+      room.hostId = room.players[0].id;
+    }
+    room.log.push('Returning to the waiting room. Ready for another game!');
+    broadcast(room);
+  });
+
+  socket.on('kickPlayer', ({ playerId }) => {
+    const room = rooms[currentRoomId];
+    if (!room) return;
+    if (room.hostId !== socket.id) return emitError('Only the host can kick.');
+    if (room.started) return emitError('You cannot kick during a game.');
+    if (playerId === socket.id) return emitError('You cannot kick yourself.');
+    const idx = room.players.findIndex(p => p.id === playerId);
+    if (idx === -1) return;
+    const kicked = room.players[idx];
+    room.players.splice(idx, 1);
+    room.log.push(`${kicked.name} was kicked by the host.`);
+    const sock = io.sockets.sockets.get(kicked.socketId);
+    if (sock) {
+      sock.emit('kicked', { reason: 'You were kicked from the room by the host.' });
+      sock.leave(room.id);
+    }
+    broadcast(room);
+  });
+
   socket.on('chat', ({ message }) => {
     const room = rooms[currentRoomId];
     if (!room) return;
@@ -368,7 +429,24 @@ io.on('connection', (socket) => {
       if (room.players.length === 0) { delete rooms[room.id]; return; }
       room.log.push(`${player.name} left the lobby.`);
     } else {
-      room.log.push(`${player.name} disconnected.`);
+      room.log.push(`${player.name} disconnected and will be skipped.`);
+      // Pass the host crown if the host dropped, so the game can be ended/restarted.
+      if (room.hostId === socket.id) {
+        const newHost = room.players.find(p => p.connected);
+        if (newHost) room.hostId = newHost.id;
+      }
+      // If the disconnect victim was the player whose turn it is, skip them.
+      const myIdx = room.players.findIndex(p => p.id === socket.id);
+      if (myIdx === room.currentTurnIdx) {
+        const wasChallenger = room.canChallengeId === socket.id;
+        room.currentTurnIdx = findNextActiveIdx(room, room.currentTurnIdx);
+        room.canChallengeId = wasChallenger ? room.players[room.currentTurnIdx].id : room.canChallengeId;
+      } else if (room.canChallengeId === socket.id) {
+        // Challenger dropped without acting - pass challenge rights to the next active player.
+        const newIdx = findNextActiveIdx(room, myIdx);
+        room.canChallengeId = room.players[newIdx].id;
+        room.currentTurnIdx = newIdx;
+      }
     }
     broadcast(room);
   });

@@ -2,6 +2,9 @@
 const socket = io();
 
 const RANKS = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
+// Ranks that can be CLAIMED as the target for a play. Jacks are excluded —
+// you can still play a J card, but only as a bluff for some other rank.
+const TARGET_RANKS = RANKS.filter(r => r !== 'J');
 const SUIT_SYMBOLS = { H: '♥', D: '♦', C: '♣', S: '♠' };
 const SUIT_COLORS  = { H: 'text-red-600', D: 'text-red-600', C: 'text-black', S: 'text-black' };
 
@@ -43,6 +46,11 @@ socket.on('joined', ({ roomId, playerId }) => {
 });
 
 socket.on('errorMsg', ({ message }) => showError(message));
+
+socket.on('kicked', ({ reason }) => {
+  alert(reason || 'You were removed from the room.');
+  location.reload();
+});
 
 socket.on('roomState', (state) => {
   roomState = state;
@@ -128,15 +136,27 @@ $('chatInput').addEventListener('keydown', (e) => {
 function renderWaitingRoom(state) {
   const list = $('playerList');
   list.innerHTML = '';
+  const isHost = state.hostId === myId;
   state.players.forEach(p => {
     const div = document.createElement('div');
     div.className = 'flex justify-between items-center px-3 py-2 rounded bg-white/5';
+    const showKick = isHost && p.id !== myId;
     div.innerHTML = `
       <span>${escapeHtml(p.name)}${p.id === myId ? ' <span class="text-emerald-300">(you)</span>' : ''}${p.id === state.hostId ? ' 👑' : ''}</span>
-      <span class="text-xs text-emerald-200">${p.connected ? 'online' : 'offline'}</span>`;
+      <span class="flex items-center gap-2">
+        <span class="text-xs text-emerald-200">${p.connected ? 'online' : 'offline'}</span>
+        ${showKick ? '<button class="kickBtn bg-red-600/70 hover:bg-red-600 text-xs px-2 py-1 rounded font-bold transition">Kick</button>' : ''}
+      </span>`;
+    const kickBtn = div.querySelector('.kickBtn');
+    if (kickBtn) {
+      kickBtn.onclick = () => {
+        if (confirm(`Kick ${p.name} from the room?`)) {
+          socket.emit('kickPlayer', { playerId: p.id });
+        }
+      };
+    }
     list.appendChild(div);
   });
-  const isHost = state.hostId === myId;
   const enough = state.players.length >= 2;
   $('startBtn').disabled = !isHost || !enough;
   $('hostHint').textContent = isHost
@@ -152,18 +172,22 @@ function renderGame(state) {
     const isCurrent = idx === state.currentTurnIdx;
     const canChallenge = p.id === state.canChallengeId;
     const isMe = p.id === myId;
+    const isOut = p.cardCount === 0;
     const div = document.createElement('div');
-    const borderCls = isCurrent
-      ? 'border-yellow-400 ring-2 ring-yellow-400'
-      : isMe ? 'border-emerald-400' : 'border-white/10';
-    div.className = `relative bg-black/40 p-3 rounded-xl text-center min-w-[110px] border ${borderCls}`;
+    const borderCls = isOut
+      ? 'border-yellow-300 ring-2 ring-yellow-300/60'
+      : isCurrent
+        ? 'border-yellow-400 ring-2 ring-yellow-400'
+        : isMe ? 'border-emerald-400' : 'border-white/10';
+    div.className = `relative bg-black/40 p-3 rounded-xl text-center min-w-[110px] border ${borderCls} ${isOut ? 'opacity-80' : ''}`;
     div.innerHTML = `
       ${p.seatNumber ? `<div class="absolute -top-2 -left-2 bg-yellow-400 text-black w-7 h-7 rounded-full flex items-center justify-center font-extrabold text-sm shadow">${p.seatNumber}</div>` : ''}
       ${isMe ? '<div class="absolute -top-2 -right-2 bg-emerald-400 text-black px-2 py-0.5 rounded-full text-[10px] font-extrabold shadow">YOU</div>' : ''}
       <div class="font-bold truncate">${escapeHtml(p.name)}${p.isSkipped ? ' ⏭' : ''}</div>
-      <div class="text-3xl my-1">${isMe ? '🃏' : '🂠'}</div>
-      <div class="text-sm">${p.cardCount} card${p.cardCount === 1 ? '' : 's'}</div>
-      ${canChallenge ? '<div class="text-[10px] mt-1 text-red-300">may challenge</div>' : ''}
+      <div class="text-3xl my-1">${isOut ? '🏆' : (isMe ? '🃏' : '🂠')}</div>
+      <div class="text-sm">${isOut ? 'finished' : `${p.cardCount} card${p.cardCount === 1 ? '' : 's'}`}</div>
+      ${isOut ? '<div class="text-[10px] mt-1 text-yellow-300 font-extrabold">WON!</div>' : ''}
+      ${canChallenge && !isOut ? '<div class="text-[10px] mt-1 text-red-300">may challenge</div>' : ''}
       ${!p.connected ? '<div class="text-[10px] text-gray-400">disconnected</div>' : ''}
     `;
     opp.appendChild(div);
@@ -199,7 +223,7 @@ function renderGame(state) {
     playBtn.classList.add('hidden');
     const rb = $('rankButtons');
     if (rb.children.length === 0) {
-      RANKS.forEach(r => {
+      TARGET_RANKS.forEach(r => {
         const btn = document.createElement('button');
         btn.className = 'bg-white/10 hover:bg-yellow-400 hover:text-black border border-white/20 px-3 py-2 rounded font-bold transition disabled:opacity-30 disabled:cursor-not-allowed min-w-[44px]';
         btn.textContent = r;
@@ -307,6 +331,12 @@ $('playBtn').onclick = () => {
   selectedCards.clear();
 };
 $('liarBtn').onclick = () => socket.emit('callLiar');
+
+// Play Again — reset the same room back to the waiting lobby instead of reloading.
+const playAgainBtn = $('playAgainBtn');
+if (playAgainBtn) {
+  playAgainBtn.onclick = () => socket.emit('playAgain');
+}
 
 // ---------- Settings menu ----------
 $('settingsBtn').onclick = (e) => {
