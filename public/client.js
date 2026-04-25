@@ -9,6 +9,8 @@ let myId = null;
 let myHand = [];
 let selectedCards = new Set();
 let roomState = null;
+let prevHandIds = new Set();   // hand IDs from the previous 'hand' event
+let newCardIds  = new Set();   // cards just added (highlighted until I next play)
 
 const $ = (id) => document.getElementById(id);
 
@@ -60,9 +62,25 @@ socket.on('roomState', (state) => {
 });
 
 socket.on('hand', (hand) => {
+  const incomingIds = new Set(hand.map(c => c.id));
+  if (prevHandIds.size === 0) {
+    // Initial deal — don't mark every card as "new"
+    newCardIds.clear();
+  } else if (incomingIds.size < prevHandIds.size) {
+    // Hand shrunk → I played or discarded → clear new-card highlights
+    newCardIds.clear();
+  } else {
+    // Hand grew (took a pile) → mark cards I didn't have before as "new"
+    for (const id of incomingIds) {
+      if (!prevHandIds.has(id)) newCardIds.add(id);
+    }
+  }
+  // Drop "new" markers for cards no longer in hand
+  for (const id of [...newCardIds]) if (!incomingIds.has(id)) newCardIds.delete(id);
+  prevHandIds = incomingIds;
   myHand = hand;
   // Drop selections that are no longer in hand
-  selectedCards = new Set([...selectedCards].filter(id => hand.some(c => c.id === id)));
+  selectedCards = new Set([...selectedCards].filter(id => incomingIds.has(id)));
   renderHand();
 });
 
@@ -236,6 +254,7 @@ function makeCardDiv(card, selectable, hidden) {
   }
   if (selectable) {
     if (selectedCards.has(card.id)) div.classList.add('selected');
+    if (newCardIds.has(card.id)) div.classList.add('card-new');
     div.onclick = () => {
       if (selectedCards.has(card.id)) selectedCards.delete(card.id);
       else if (selectedCards.size < 3) selectedCards.add(card.id);
