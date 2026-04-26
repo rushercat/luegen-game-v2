@@ -31,7 +31,7 @@ const FOUR_OF_KIND_MS = 15000;
 const LIARS_BAR_RANKS = ['J', 'Q', 'K', 'A'];
 const LIARS_BAR_SUITS = SUITS;
 const LIARS_BAR_CARDS_PER_PLAYER = 5;
-const LIARS_BAR_FACE_DECK_SIZE = LIARS_BAR_RANKS.length * LIARS_BAR_SUITS.length; // 16
+const LIARS_BAR_FACE_DECK_SIZE = LIARS_BAR_RANKS.length * LIARS_BAR_SUITS.length;
 const LIARS_BAR_GUN_CHAMBERS = 6;
 
 const JOKER_SLIDER_MAX = 10;
@@ -43,13 +43,8 @@ const LOBBY_GRACE_MS = 60 * 1000;
 const EMPTY_ROOM_GRACE_MS = 5 * 60 * 1000;
 
 // ---------- Helpers ----------
-function newPlayerId() {
-  return crypto.randomBytes(8).toString('hex');
-}
-
-function jokerCard(idx) {
-  return { rank: 'JOKER', suit: '*', id: 'JK' + (idx + 1) };
-}
+function newPlayerId() { return crypto.randomBytes(8).toString('hex'); }
+function jokerCard(idx) { return { rank: 'JOKER', suit: '*', id: 'JK' + (idx + 1) }; }
 
 function createDeck() {
   const deck = [];
@@ -91,16 +86,14 @@ function dealCards(deck, numPlayers) {
   return hands;
 }
 
-// Lean Deck removal: Jacks + jokers untouched, drops spread round-robin.
+// Lean Deck: Jacks + jokers untouched, drops spread round-robin.
 function applyLeanDeck(deck, cardsToRemove) {
   if (cardsToRemove <= 0) return deck;
   const eligibleRanks = RANKS.filter(r => r !== 'J');
   const buckets = {};
   for (const r of eligibleRanks) buckets[r] = [];
   for (const c of deck) {
-    if (c.rank !== 'J' && c.rank !== 'JOKER' && buckets[c.rank]) {
-      buckets[c.rank].push(c);
-    }
+    if (c.rank !== 'J' && c.rank !== 'JOKER' && buckets[c.rank]) buckets[c.rank].push(c);
   }
   for (const r of eligibleRanks) shuffle(buckets[r]);
   const rankOrder = shuffle([...eligibleRanks]);
@@ -112,9 +105,7 @@ function applyLeanDeck(deck, cardsToRemove) {
     let droppedThisPass = 0;
     for (const r of rankOrder) {
       if (drops[r] < buckets[r].length) {
-        drops[r]++;
-        remaining--;
-        droppedThisPass++;
+        drops[r]++; remaining--; droppedThisPass++;
         if (remaining === 0) break;
       }
     }
@@ -167,7 +158,7 @@ function defaultSettings() {
     shuffleSeats: false,
     jokerCount:   0,
     jokerRandom:  false,
-    wildSuit:     '',     // '' | 'H' | 'D' | 'C' | 'S' | 'random'
+    wildSuit:     '',
     fogOfWar:     false
   };
 }
@@ -196,16 +187,17 @@ function newRoom(id) {
     emptyTimer: null,
     settings: defaultSettings(),
     actualJokerCount: 0,
-    actualWildSuit: ''      // resolved at startGame
+    actualWildSuit: ''
   };
 }
 
 function publicState(room) {
   const hideCounts = room.settings && room.settings.mysteryHands && room.started && !room.gameOver;
   const hideJokerCount = room.started && !room.gameOver && !!room.settings.jokerRandom;
-  // Fog of War hides only the cumulative pile size — target rank, last play
-  // count, etc. all stay visible.
-  const hidePile = room.settings && room.settings.fogOfWar && room.started && !room.gameOver;
+  // Fog of War: hide pile size, last-play count AND the entire game log so
+  // play counts in log lines like "Bob plays 2 cards claiming K" don't leak.
+  // Everything is restored once the game ends.
+  const fog = room.settings && room.settings.fogOfWar && room.started && !room.gameOver;
   return {
     id: room.id,
     hostId: room.hostId,
@@ -225,15 +217,15 @@ function publicState(room) {
     started: room.started,
     currentTurnIdx: room.currentTurnIdx,
     targetRank: room.targetRank,
-    pileSize: hidePile ? null : room.pile.length,
-    lastPlayCount: room.lastPlayCount,
+    pileSize: fog ? null : room.pile.length,
+    lastPlayCount: fog ? null : room.lastPlayCount,
     lastPlayerId: room.lastPlayerId,
     canChallengeId: room.canChallengeId,
     revealedFour: room.revealedFour,
     gameOver: room.gameOver,
     winners: room.winners,
     losers: room.losers,
-    log: room.log.slice(-30)
+    log: fog ? ['(Game log hidden by Fog of War — revealed at game over.)'] : room.log.slice(-30)
   };
 }
 
@@ -493,15 +485,10 @@ io.on('connection', (socket) => {
     clearPile(room);
 
     let jokerRequest;
-    if (room.settings.jokerRandom) {
-      jokerRequest = Math.floor(Math.random() * (JOKER_RANDOM_MAX + 1));
-    } else {
-      jokerRequest = room.settings.jokerCount | 0;
-    }
+    if (room.settings.jokerRandom) jokerRequest = Math.floor(Math.random() * (JOKER_RANDOM_MAX + 1));
+    else                            jokerRequest = room.settings.jokerCount | 0;
     room.actualJokerCount = jokerRequest;
 
-    // Resolve the wild suit. Random rolls one of the four suits at game start;
-    // a fixed setting copies through. The result is broadcast to all clients.
     if (room.settings.wildSuit === 'random') {
       room.actualWildSuit = SUITS[Math.floor(Math.random() * SUITS.length)];
     } else if (SUITS.includes(room.settings.wildSuit)) {
@@ -532,9 +519,7 @@ io.on('connection', (socket) => {
     room.log.push(`Game started - seating: ${seating}.`);
     const mods = describeActiveSettings(room.settings);
     if (mods.length) room.log.push(`Modifiers active: ${mods.join(', ')}.`);
-    if (room.actualWildSuit) {
-      room.log.push(`Wild Suit this game: ${room.actualWildSuit}.`);
-    }
+    if (room.actualWildSuit) room.log.push(`Wild Suit this game: ${room.actualWildSuit}.`);
     if (room.settings.liarsBar) room.log.push(`#1 ${room.players[0].name} starts.`);
     else room.log.push(`#1 ${room.players[0].name} chooses the first Target Rank and starts.`);
     if (checkInstantLoss(room)) { broadcast(room); return; }
@@ -606,8 +591,6 @@ io.on('connection', (socket) => {
     if (room.lastPlayedCards.length === 0) return emitError('Nothing to challenge.');
     const lastPlayer = room.players.find(p => p.id === room.lastPlayerId);
     const lastCards = room.lastPlayedCards;
-    // A card is truthful if its rank matches the target, OR it's a Joker, OR
-    // its suit is the active Wild Suit.
     const wildSuit = room.actualWildSuit;
     const wasLie = lastCards.some(c =>
       c.rank !== room.targetRank &&
@@ -719,9 +702,7 @@ io.on('connection', (socket) => {
     room.currentTurnIdx = 0;
     room.revealedFour = null;
     room.players.forEach(p => {
-      p.hand = [];
-      p.isSkipped = false;
-      p.alive = true;
+      p.hand = []; p.isSkipped = false; p.alive = true;
       p.chambers = LIARS_BAR_GUN_CHAMBERS;
     });
     clearPile(room);
@@ -742,9 +723,7 @@ io.on('connection', (socket) => {
     room.currentTurnIdx = 0;
     room.revealedFour = null;
     room.players.forEach(p => {
-      p.hand = [];
-      p.isSkipped = false;
-      p.alive = true;
+      p.hand = []; p.isSkipped = false; p.alive = true;
       p.chambers = LIARS_BAR_GUN_CHAMBERS;
     });
     clearPile(room);

@@ -309,7 +309,6 @@ function applySettingsToPanel(state) {
       inp.value = settings[f.key] || '';
     }
   }
-  // Joker slider greys out when "Random Jokers" is toggled.
   const jokerSlider = $('modJokerCount');
   const jokerLabel  = $('modJokerCountVal');
   if (jokerSlider) jokerSlider.disabled = !isHost || !!settings.jokerRandom;
@@ -399,8 +398,6 @@ function describeActiveSettingsClient(s, state) {
   } else if (s.jokerCount > 0) {
     out.push(`Jokers (${s.jokerCount})`);
   }
-  // Wild Suit chip: prefer the resolved suit (state.actualWildSuit) so a
-  // "random" setting still shows the chosen symbol once the game starts.
   const ws = (state && state.actualWildSuit) || (SUITS_FOR_CHIPS.includes(s.wildSuit) ? s.wildSuit : '');
   if (ws) out.push(`Wild ${SUIT_SYMBOLS[ws] || ws}`);
   else if (s.wildSuit === 'random') out.push('Wild Suit (random)');
@@ -479,10 +476,8 @@ function renderGame(state) {
   if (mySeat) mySeat.textContent = me && me.seatNumber ? `You are #${me.seatNumber}` : '';
 
   $('targetRank').textContent = state.targetRank || '-';
-  // Fog of War: server sends pileSize=null. Show "?" instead.
   $('pileSize').textContent = (state.pileSize === null || state.pileSize === undefined) ? '?' : state.pileSize;
 
-  // Wild Suit indicator under target rank.
   const wildEl = $('wildSuitInfo');
   if (wildEl) {
     if (state.actualWildSuit && SUIT_SYMBOLS[state.actualWildSuit]) {
@@ -492,9 +487,13 @@ function renderGame(state) {
     }
   }
 
+  // Show "X just played N cards" — or "X just played some cards" under fog.
   if (state.lastPlayCount > 0) {
     const lp = state.players.find(p => p.id === state.lastPlayerId);
     $('lastPlayInfo').textContent = `${lp ? lp.name : 'Someone'} just played ${state.lastPlayCount} card(s).`;
+  } else if (state.lastPlayCount === null && state.lastPlayerId) {
+    const lp = state.players.find(p => p.id === state.lastPlayerId);
+    $('lastPlayInfo').textContent = `${lp ? lp.name : 'Someone'} just played some cards.`;
   } else if (liarsBar) {
     $('lastPlayInfo').textContent = state.targetRank ? `Round target is ${state.targetRank}.` : '';
   } else {
