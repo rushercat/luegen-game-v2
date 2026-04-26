@@ -9,8 +9,8 @@ const socket = io({
 
 const RANKS = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
 const TARGET_RANKS = RANKS.filter(r => r !== 'J');
-const SUIT_SYMBOLS = { H: '♥', D: '♦', C: '♣', S: '♠' };
-const SUIT_COLORS  = { H: 'text-red-600', D: 'text-red-600', C: 'text-black', S: 'text-black' };
+const SUIT_SYMBOLS = { H: '♥', D: '♦', C: '♣', S: '♠', '*': '★' };
+const SUIT_COLORS  = { H: 'text-red-600', D: 'text-red-600', C: 'text-black', S: 'text-black', '*': 'text-purple-700' };
 
 const STORAGE_KEY = 'lugen-session';
 
@@ -26,7 +26,7 @@ let modSyncing = false;
 
 const DEFAULT_SETTINGS = {
   cardsRemoved: 0, pileStart: 0, maxCards: 3,
-  mysteryHands: false, suddenDeath: false, reverseOrder: false
+  mysteryHands: false, liarsBar: false, shuffleSeats: false
 };
 
 const $ = (id) => document.getElementById(id);
@@ -41,12 +41,10 @@ function loadSession() {
   } catch (_) {}
   return null;
 }
-
 function saveSession(data) {
   session = data;
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
 }
-
 function clearSession() {
   session = null;
   try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
@@ -73,7 +71,6 @@ function ensureOverlay() {
   document.body.appendChild(el);
   return el;
 }
-
 function showOverlay(title, sub) {
   const el = ensureOverlay();
   el.classList.remove('hidden');
@@ -82,7 +79,6 @@ function showOverlay(title, sub) {
   if (t && title) t.textContent = title;
   if (s && sub) s.textContent = sub;
 }
-
 function hideOverlay() {
   const el = document.getElementById('reconnectOverlay');
   if (el) el.classList.add('hidden');
@@ -117,21 +113,17 @@ socket.on('connect', () => {
     hideOverlay();
   }
 });
-
 socket.on('disconnect', () => {
   if (session && session.roomId && session.playerId) {
     showOverlay('Connection lost', 'Trying to reconnect...');
   }
 });
-
 if (socket.io && typeof socket.io.on === 'function') {
   socket.io.on('reconnect_failed', () => {
     showOverlay('Could not reconnect', 'Please reload the page.');
   });
   socket.io.on('reconnect_attempt', (attempt) => {
-    if (session && session.roomId) {
-      showOverlay('Reconnecting...', `Attempt ${attempt}...`);
-    }
+    if (session && session.roomId) showOverlay('Reconnecting...', `Attempt ${attempt}...`);
   });
 }
 
@@ -192,15 +184,9 @@ socket.on('roomState', (state) => {
 
 socket.on('hand', (hand) => {
   const incomingIds = new Set(hand.map(c => c.id));
-  if (prevHandIds.size === 0) {
-    newCardIds.clear();
-  } else if (incomingIds.size < prevHandIds.size) {
-    newCardIds.clear();
-  } else {
-    for (const id of incomingIds) {
-      if (!prevHandIds.has(id)) newCardIds.add(id);
-    }
-  }
+  if (prevHandIds.size === 0) newCardIds.clear();
+  else if (incomingIds.size < prevHandIds.size) newCardIds.clear();
+  else for (const id of incomingIds) if (!prevHandIds.has(id)) newCardIds.add(id);
   for (const id of [...newCardIds]) if (!incomingIds.has(id)) newCardIds.delete(id);
   prevHandIds = incomingIds;
   myHand = hand;
@@ -212,10 +198,28 @@ socket.on('reveal', ({ cards, claimed, wasLie, challengerName, lastPlayerName })
   const rev = $('revealArea');
   const verdict = wasLie
     ? `LIE! ${challengerName} called ${lastPlayerName} out - claimed ${claimed}`
-    : `TRUTH! ${lastPlayerName} actually had ${claimed}s`;
+    : `TRUTH! ${lastPlayerName} actually had ${claimed}s (or jokers)`;
   rev.innerHTML = `<div class="w-full text-center mb-2 font-bold ${wasLie ? 'text-red-300' : 'text-green-300'}">${verdict}</div>`;
   cards.forEach(c => rev.appendChild(makeCardDiv(c, false, false)));
   setTimeout(() => { if (rev.firstChild && rev.textContent.includes(claimed)) rev.innerHTML = ''; }, 4000);
+});
+
+// Liar's Bar gun pull animation: brief flash showing what happened.
+socket.on('gunPull', ({ playerName, died, chambersBefore, chambersAfter, prob }) => {
+  const overlay = document.createElement('div');
+  overlay.className = 'fixed inset-0 z-40 flex items-center justify-center pointer-events-none';
+  const probStr = chambersBefore > 0 ? `1 / ${chambersBefore}` : 'guaranteed';
+  overlay.innerHTML = `
+    <div class="bg-black/85 border-4 ${died ? 'border-red-500' : 'border-emerald-400'} rounded-2xl px-10 py-6 text-center shadow-2xl">
+      <div class="text-6xl mb-2">${died ? '\u{1F4A5}' : '\u{1F50A}'}</div>
+      <div class="text-2xl font-extrabold ${died ? 'text-red-400' : 'text-emerald-300'}">
+        ${died ? 'BANG!' : '*click*'}
+      </div>
+      <div class="text-white text-lg mt-1">${escapeHtml(playerName)}</div>
+      <div class="text-white/70 text-sm mt-2">Chance was <b>${probStr}</b> ${died ? '— unlucky.' : '— survived. Next: 1/' + Math.max(1, chambersAfter)}</div>
+    </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => overlay.remove(), 2200);
 });
 
 socket.on('fourOfKindReveal', ({ playerName, cards, durationMs }) => {
@@ -254,10 +258,9 @@ const MOD_FIELDS = [
   { key: 'pileStart',    input: 'modPileStart',    label: 'modPileStartVal',    kind: 'range' },
   { key: 'maxCards',     input: 'modMaxCards',     label: 'modMaxCardsVal',     kind: 'range' },
   { key: 'mysteryHands', input: 'modMysteryHands', kind: 'check' },
-  { key: 'suddenDeath',  input: 'modSuddenDeath',  kind: 'check' },
-  { key: 'reverseOrder', input: 'modReverseOrder', kind: 'check' }
+  { key: 'liarsBar',     input: 'modLiarsBar',     kind: 'check' },
+  { key: 'shuffleSeats', input: 'modShuffleSeats', kind: 'check' }
 ];
-
 const _modPending = {};
 function emitModChange(key, value) {
   clearTimeout(_modPending[key]);
@@ -265,7 +268,6 @@ function emitModChange(key, value) {
     socket.emit('updateSettings', { [key]: value });
   }, 80);
 }
-
 function applySettingsToPanel(state) {
   const settings = (state && state.settings) || DEFAULT_SETTINGS;
   const isHost = state && state.hostId === myId;
@@ -292,7 +294,6 @@ function applySettingsToPanel(state) {
   const resetBtn = $('resetModsBtn');
   if (resetBtn) resetBtn.classList.toggle('hidden', !isHost);
 }
-
 (function wireModifiers() {
   for (const f of MOD_FIELDS) {
     const inp = document.getElementById(f.input);
@@ -353,12 +354,12 @@ function renderWaitingRoom(state) {
 function describeActiveSettingsClient(s) {
   if (!s) return [];
   const out = [];
+  if (s.liarsBar)         out.push("Liar's Bar Mode");
   if (s.cardsRemoved > 0) out.push(`Lean Deck -${s.cardsRemoved}`);
   if (s.pileStart > 0)    out.push(`Loaded Pile +${s.pileStart}`);
   if (s.maxCards < 3)     out.push(`Trickle (max ${s.maxCards})`);
   if (s.mysteryHands)     out.push('Mystery Hands');
-  if (s.suddenDeath)      out.push('Sudden Death');
-  if (s.reverseOrder)     out.push('Reverse');
+  if (s.shuffleSeats)     out.push('Shuffle Seats');
   return out;
 }
 
@@ -372,39 +373,65 @@ function renderActiveMods(state) {
   ).join('');
 }
 
+// Render a player's gun: 6 chambers, with `chambers` empty / spent shown.
+function renderGunDots(chambers) {
+  const total = 6;
+  const remaining = Math.max(0, Math.min(total, chambers || 0));
+  let html = '<span class="inline-flex gap-0.5 items-center">';
+  for (let i = 0; i < total; i++) {
+    if (i < remaining) html += '<span class="w-1.5 h-1.5 bg-yellow-300 rounded-full"></span>';
+    else                html += '<span class="w-1.5 h-1.5 bg-red-500/80 rounded-full"></span>';
+  }
+  html += '</span>';
+  return html;
+}
+
 function renderGame(state) {
   renderActiveMods(state);
+  const liarsBar = !!(state.settings && state.settings.liarsBar);
+
   const opp = $('opponents');
   opp.innerHTML = '';
   state.players.forEach((p, idx) => {
     const isCurrent = idx === state.currentTurnIdx;
     const canChallenge = p.id === state.canChallengeId;
     const isMe = p.id === myId;
+    const isDead = liarsBar && p.alive === false;
     let displayCount;
     if (isMe) displayCount = myHand.length;
     else if (p.cardCount === null || p.cardCount === undefined) displayCount = '?';
     else displayCount = p.cardCount;
-    const isOut = (typeof displayCount === 'number') ? displayCount === 0 : false;
+    const isOut = !liarsBar && (typeof displayCount === 'number') ? displayCount === 0 : false;
+
     const div = document.createElement('div');
-    const borderCls = isOut
-      ? 'border-yellow-300 ring-2 ring-yellow-300/60'
-      : isCurrent
-        ? 'border-yellow-400 ring-2 ring-yellow-400'
-        : isMe ? 'border-emerald-400' : 'border-white/10';
-    div.className = `relative bg-black/40 p-3 rounded-xl text-center min-w-[110px] border ${borderCls} ${isOut ? 'opacity-80' : ''}`;
-    const countLabel = isOut
-      ? 'finished'
-      : (typeof displayCount === 'number'
-          ? `${displayCount} card${displayCount === 1 ? '' : 's'}`
-          : `? cards`);
+    let borderCls;
+    if (isDead)        borderCls = 'border-red-500/70 ring-2 ring-red-500/40';
+    else if (isOut)    borderCls = 'border-yellow-300 ring-2 ring-yellow-300/60';
+    else if (isCurrent) borderCls = 'border-yellow-400 ring-2 ring-yellow-400';
+    else if (isMe)     borderCls = 'border-emerald-400';
+    else               borderCls = 'border-white/10';
+    div.className = `relative bg-black/40 p-3 rounded-xl text-center min-w-[120px] border ${borderCls} ${(isOut || isDead) ? 'opacity-70' : ''}`;
+
+    const countLabel = isDead
+      ? 'eliminated'
+      : (isOut
+          ? 'finished'
+          : (typeof displayCount === 'number'
+              ? `${displayCount} card${displayCount === 1 ? '' : 's'}`
+              : '? cards'));
+
+    const gunHtml = liarsBar ? `<div class="mt-1 flex justify-center">${renderGunDots(p.chambers)}</div>` : '';
+
     div.innerHTML = `
       ${p.seatNumber ? `<div class="absolute -top-2 -left-2 bg-yellow-400 text-black w-7 h-7 rounded-full flex items-center justify-center font-extrabold text-sm shadow">${p.seatNumber}</div>` : ''}
       ${isMe ? '<div class="absolute -top-2 -right-2 bg-emerald-400 text-black px-2 py-0.5 rounded-full text-[10px] font-extrabold shadow">YOU</div>' : ''}
       <div class="font-bold truncate">${escapeHtml(p.name)}${p.isSkipped ? ' ⏭' : ''}</div>
-      <div class="text-3xl my-1">${isOut ? '\u{1F3C6}' : (isMe ? '\u{1F0CF}' : '\u{1F0A0}')}</div>
+      <div class="text-3xl my-1">${isDead ? '\u{1F480}' : (isOut ? '\u{1F3C6}' : (isMe ? '\u{1F0CF}' : '\u{1F0A0}'))}</div>
       <div class="text-sm">${countLabel}</div>
+      ${gunHtml}
       ${isOut ? '<div class="text-[10px] mt-1 text-yellow-300 font-extrabold">WON!</div>' : ''}
-      ${canChallenge && !isOut ? '<div class="text-[10px] mt-1 text-red-300">may challenge</div>' : ''}
+      ${isDead ? '<div class="text-[10px] mt-1 text-red-400 font-extrabold">OUT</div>' : ''}
+      ${canChallenge && !isOut && !isDead ? '<div class="text-[10px] mt-1 text-red-300">may challenge</div>' : ''}
       ${!p.connected ? '<div class="text-[10px] text-amber-300">disconnected</div>' : ''}
     `;
     opp.appendChild(div);
@@ -419,6 +446,8 @@ function renderGame(state) {
   if (state.lastPlayCount > 0) {
     const lp = state.players.find(p => p.id === state.lastPlayerId);
     $('lastPlayInfo').textContent = `${lp ? lp.name : 'Someone'} just played ${state.lastPlayCount} card(s).`;
+  } else if (liarsBar) {
+    $('lastPlayInfo').textContent = state.targetRank ? `Round target is ${state.targetRank}.` : '';
   } else {
     $('lastPlayInfo').textContent = state.targetRank ? '' : 'Waiting for the round-starter to choose a Target Rank.';
   }
@@ -427,12 +456,23 @@ function renderGame(state) {
   if (cur) $('turnIndicator').textContent = cur.id === myId ? 'YOUR TURN' : `${cur.name}'s turn`;
 
   const isMyTurn = cur && cur.id === myId;
+  const myAlive = !me || me.alive !== false;
   const rankPicker = $('rankPicker');
   const playBtn = $('playBtn');
   const maxCards = (state.settings && state.settings.maxCards) || 3;
   const validSelection = selectedCards.size >= 1 && selectedCards.size <= maxCards;
 
-  if (isMyTurn && state.targetRank === null) {
+  // In Liar's Bar mode the rank picker never appears (target is auto-set).
+  if (liarsBar) {
+    rankPicker.classList.add('hidden');
+    if (isMyTurn && myAlive) {
+      playBtn.classList.remove('hidden');
+      playBtn.textContent = `Play as ${state.targetRank || ''}${state.targetRank === 'A' ? '' : 's'}`;
+      playBtn.disabled = !validSelection;
+    } else {
+      playBtn.classList.add('hidden');
+    }
+  } else if (isMyTurn && state.targetRank === null) {
     rankPicker.classList.remove('hidden');
     playBtn.classList.add('hidden');
     const rb = $('rankButtons');
@@ -467,29 +507,35 @@ function renderHand() {
   const handDiv = $('hand');
   handDiv.innerHTML = '';
   const sorted = [...myHand].sort((a, b) => {
-    const r = RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank);
-    if (r !== 0) return r;
-    return a.suit.localeCompare(b.suit);
+    const ai = RANKS.indexOf(a.rank);
+    const bi = RANKS.indexOf(b.rank);
+    if (ai !== bi) return ai - bi;
+    return (a.suit || '').localeCompare(b.suit || '');
   });
   sorted.forEach(c => handDiv.appendChild(makeCardDiv(c, true, false)));
   $('handCount').textContent = myHand.length;
   const handMax = $('handMax');
-  if (handMax) {
-    handMax.textContent = String((roomState && roomState.settings && roomState.settings.maxCards) || 3);
-  }
+  if (handMax) handMax.textContent = String((roomState && roomState.settings && roomState.settings.maxCards) || 3);
   updateFourBtn();
   if (roomState && roomState.started) renderGame(roomState);
 }
 
 function makeCardDiv(card, selectable, hidden) {
+  const isJoker = card && card.rank === 'JOKER';
   const div = document.createElement('div');
   div.className = `card rounded-lg flex flex-col items-center justify-center transition-transform ${
-    hidden ? 'card-back' : 'card-face ' + SUIT_COLORS[card.suit]
+    hidden ? 'card-back' : 'card-face ' + (isJoker ? 'text-purple-700 bg-amber-100' : SUIT_COLORS[card.suit] || 'text-black')
   } ${selectable ? 'cursor-pointer hover:-translate-y-1' : ''}`;
   if (!hidden) {
-    div.innerHTML = `
-      <div class="text-2xl font-extrabold leading-none">${card.rank}</div>
-      <div class="text-3xl leading-none">${SUIT_SYMBOLS[card.suit]}</div>`;
+    if (isJoker) {
+      div.innerHTML = `
+        <div class="text-3xl font-extrabold leading-none">★</div>
+        <div class="text-[10px] font-bold mt-1">JOKER</div>`;
+    } else {
+      div.innerHTML = `
+        <div class="text-2xl font-extrabold leading-none">${card.rank}</div>
+        <div class="text-3xl leading-none">${SUIT_SYMBOLS[card.suit] || ''}</div>`;
+    }
   }
   if (selectable) {
     if (selectedCards.has(card.id)) div.classList.add('selected');
@@ -505,10 +551,12 @@ function makeCardDiv(card, selectable, hidden) {
 }
 
 function updateFourBtn() {
+  const liarsBar = !!(roomState && roomState.settings && roomState.settings.liarsBar);
+  const btn = $('fourBtn');
+  if (liarsBar) { btn.classList.add('hidden'); return; }
   const counts = {};
   myHand.forEach(c => counts[c.rank] = (counts[c.rank] || 0) + 1);
   const fours = Object.entries(counts).filter(([r, c]) => c === 4 && r !== 'J').map(([r]) => r);
-  const btn = $('fourBtn');
   if (fours.length > 0) {
     btn.classList.remove('hidden');
     btn.textContent = `Discard 4 ${fours[0]}s`;
@@ -560,9 +608,7 @@ $('playBtn').onclick = () => {
 $('liarBtn').onclick = () => socket.emit('callLiar');
 
 const playAgainBtn = $('playAgainBtn');
-if (playAgainBtn) {
-  playAgainBtn.onclick = () => socket.emit('playAgain');
-}
+if (playAgainBtn) playAgainBtn.onclick = () => socket.emit('playAgain');
 
 // ---------- Settings menu ----------
 $('settingsBtn').onclick = (e) => {
@@ -570,15 +616,11 @@ $('settingsBtn').onclick = (e) => {
   $('settingsMenu').classList.toggle('hidden');
 };
 document.addEventListener('click', (e) => {
-  if (!$('settingsContainer').contains(e.target)) {
-    $('settingsMenu').classList.add('hidden');
-  }
+  if (!$('settingsContainer').contains(e.target)) $('settingsMenu').classList.add('hidden');
 });
 $('endGameBtn').onclick = () => {
   $('settingsMenu').classList.add('hidden');
-  if (confirm('End the current game and return everyone to the waiting room?')) {
-    socket.emit('endGame');
-  }
+  if (confirm('End the current game and return everyone to the waiting room?')) socket.emit('endGame');
 };
 $('leaveBtn').onclick = () => {
   $('settingsMenu').classList.add('hidden');
@@ -589,7 +631,7 @@ $('leaveBtn').onclick = () => {
   }
 };
 
-// ---------- "Rejoin last room" banner on the lobby ----------
+// ---------- Rejoin banner ----------
 function ensureRejoinBanner() {
   let el = document.getElementById('rejoinBanner');
   if (el) return el;
@@ -599,7 +641,6 @@ function ensureRejoinBanner() {
   $('lobby').querySelector('.bg-black\\/40').after(el);
   return el;
 }
-
 function showRejoinBanner() {
   if (!session || !session.roomId || !session.playerId) return;
   const el = ensureRejoinBanner();
@@ -620,7 +661,6 @@ function showRejoinBanner() {
     hideRejoinBanner();
   };
 }
-
 function hideRejoinBanner() {
   const el = document.getElementById('rejoinBanner');
   if (el) el.remove();
