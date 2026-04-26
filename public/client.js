@@ -14,6 +14,12 @@ const SUIT_COLORS  = { H: 'text-red-600', D: 'text-red-600', C: 'text-black', S:
 
 const STORAGE_KEY = 'lugen-session';
 
+// Audio cues for Liar's Bar gun pulls.
+//   gunshot.mp3 - the BANG when a player is eliminated.
+//   click.mp3   - the empty-chamber click when they survive.
+const SOUND_GUNSHOT = '/sounds/gunshot.mp3';
+const SOUND_CLICK   = '/sounds/click.mp3';
+
 let myId = null;
 let myHand = [];
 let selectedCards = new Set();
@@ -50,6 +56,19 @@ function clearSession() {
   session = null;
   try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
 }
+
+// ---------- Sound effects ----------
+// Fresh Audio() per call so rapid pulls don't clip each other.
+function playSound(src, volume) {
+  try {
+    const a = new Audio(src);
+    a.volume = typeof volume === 'number' ? volume : 0.85;
+    const r = a.play();
+    if (r && typeof r.catch === 'function') r.catch(() => {});
+  } catch (_) {}
+}
+function playGunshot() { playSound(SOUND_GUNSHOT, 0.85); }
+function playClick()   { playSound(SOUND_CLICK,   0.7); }
 
 // ---------- Reconnecting overlay ----------
 function ensureOverlay() {
@@ -206,6 +225,9 @@ socket.on('reveal', ({ cards, claimed, wasLie, challengerName, lastPlayerName })
 });
 
 socket.on('gunPull', ({ playerName, died, chambersBefore, chambersAfter }) => {
+  // Gunshot on elimination, empty-chamber click on survival.
+  if (died) playGunshot();
+  else      playClick();
   const overlay = document.createElement('div');
   overlay.className = 'fixed inset-0 z-40 flex items-center justify-center pointer-events-none';
   const probStr = chambersBefore > 0 ? `1 / ${chambersBefore}` : 'guaranteed';
@@ -286,8 +308,6 @@ function applySettingsToPanel(state) {
       inp.checked = !!settings[f.key];
     }
   }
-  // The joker slider is overridden when "Random Jokers" is on — gray it out
-  // and show "?" so the host can't tell what number is in play.
   const jokerSlider = $('modJokerCount');
   const jokerLabel  = $('modJokerCountVal');
   if (jokerSlider) jokerSlider.disabled = !isHost || !!settings.jokerRandom;
