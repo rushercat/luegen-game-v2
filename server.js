@@ -28,14 +28,14 @@ const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
 const SUITS = ['H', 'D', 'C', 'S'];
 const FOUR_OF_KIND_MS = 15000;
 
-const LIARS_BAR_RANKS = ['J', 'Q', 'K', 'A'];           // 16 face cards
+const LIARS_BAR_RANKS = ['J', 'Q', 'K', 'A'];
 const LIARS_BAR_SUITS = SUITS;
 const LIARS_BAR_CARDS_PER_PLAYER = 5;
 const LIARS_BAR_FACE_DECK_SIZE = LIARS_BAR_RANKS.length * LIARS_BAR_SUITS.length; // 16
 const LIARS_BAR_GUN_CHAMBERS = 6;
 
 const JOKER_SLIDER_MAX = 10;
-const JOKER_RANDOM_MAX = 5;     // when "Random Jokers" is on, server rolls 0..5
+const JOKER_RANDOM_MAX = 5;
 
 const LOBBY_GRACE_MS = 60 * 1000;
 const EMPTY_ROOM_GRACE_MS = 5 * 60 * 1000;
@@ -49,14 +49,12 @@ function jokerCard(idx) {
   return { rank: 'JOKER', suit: '*', id: 'JK' + (idx + 1) };
 }
 
-// 52-card deck for classic mode.
 function createDeck() {
   const deck = [];
   for (const r of RANKS) for (const s of SUITS) deck.push({ rank: r, suit: s, id: r + s });
   return deck;
 }
 
-// 16 face cards for Liar's Bar.
 function createLiarsBarFaceDeck() {
   const deck = [];
   for (const r of LIARS_BAR_RANKS) for (const s of LIARS_BAR_SUITS) {
@@ -65,10 +63,6 @@ function createLiarsBarFaceDeck() {
   return deck;
 }
 
-// Build a Liar's Bar deck of EXACTLY (numAlive * 5) cards.
-// jokerCountRequest is the host-set joker count (or random pick). The deck
-// auto-pads with extra jokers when the player count is too high to fill from
-// the 16 distinct face cards alone.
 function buildLiarsBarDeck(numAlive, jokerCountRequest) {
   const total = numAlive * LIARS_BAR_CARDS_PER_PLAYER;
   const minJokersForDeckSize = Math.max(0, total - LIARS_BAR_FACE_DECK_SIZE);
@@ -93,6 +87,51 @@ function dealCards(deck, numPlayers) {
   const hands = Array.from({ length: numPlayers }, () => []);
   for (let i = 0; i < deck.length; i++) hands[i % numPlayers].push(deck[i]);
   return hands;
+}
+
+// Lean Deck removal:
+//   * Jacks are NEVER dropped — the 4-Jacks instant-loss rule requires all
+//     four to remain possible.
+//   * Jokers are also exempt — they're added intentionally via the Jokers
+//     setting; dropping them would undermine that.
+//   * Drops are distributed round-robin across the remaining 12 ranks so the
+//     dropped cards are always as balanced as possible (5 dropped = 5
+//     different ranks each lose 1; 13 dropped = every eligible rank loses 1
+//     plus one rank loses 2; never "2x 7s gone but 0x 10s gone").
+function applyLeanDeck(deck, cardsToRemove) {
+  if (cardsToRemove <= 0) return deck;
+  const eligibleRanks = RANKS.filter(r => r !== 'J');
+  const buckets = {};
+  for (const r of eligibleRanks) buckets[r] = [];
+  for (const c of deck) {
+    if (c.rank !== 'J' && c.rank !== 'JOKER' && buckets[c.rank]) {
+      buckets[c.rank].push(c);
+    }
+  }
+  for (const r of eligibleRanks) shuffle(buckets[r]);
+  const rankOrder = shuffle([...eligibleRanks]);
+  const drops = {};
+  for (const r of eligibleRanks) drops[r] = 0;
+  let remaining = cardsToRemove;
+  let safety = 0;
+  while (remaining > 0 && safety < 100) {
+    let droppedThisPass = 0;
+    for (const r of rankOrder) {
+      if (drops[r] < buckets[r].length) {
+        drops[r]++;
+        remaining--;
+        droppedThisPass++;
+        if (remaining === 0) break;
+      }
+    }
+    if (droppedThisPass === 0) break;
+    safety++;
+  }
+  const idsToRemove = new Set();
+  for (const r of eligibleRanks) {
+    for (let i = 0; i < drops[r]; i++) idsToRemove.add(buckets[r][i].id);
+  }
+  return deck.filter(c => !idsToRemove.has(c.id));
 }
 
 function makeRoomId() {
@@ -157,13 +196,12 @@ function newRoom(id) {
     hostId: null,
     emptyTimer: null,
     settings: defaultSettings(),
-    actualJokerCount: 0   // resolved at startGame; revealed only when allowed
+    actualJokerCount: 0
   };
 }
 
 function publicState(room) {
   const hideCounts = room.settings && room.settings.mysteryHands && room.started && !room.gameOver;
-  // Hide actual joker count from clients while a "Random Jokers" game is live.
   const hideJokerCount = room.started && !room.gameOver && !!room.settings.jokerRandom;
   return {
     id: room.id,
@@ -245,7 +283,6 @@ function checkLastPlayerStanding(room) {
       room.winners = survivor ? [survivor.id] : [];
       room.losers = room.players.filter(p => p.alive === false).map(p => p.id);
       if (survivor) room.log.push(`${survivor.name} is the last one standing and wins!`);
-      // Reveal the joker count once the game ends.
       if (room.settings.jokerRandom) {
         room.log.push(`Random Jokers reveal: there were ${room.actualJokerCount} joker(s) in the deck.`);
       }
@@ -323,8 +360,6 @@ function pullTrigger(player) {
 function startLiarsBarRound(room) {
   const alive = room.players.filter(p => p.alive !== false);
   const { deck, jokers } = buildLiarsBarDeck(alive.length, room.actualJokerCount);
-  // Each round may need more auto-jokers than the original game-start request
-  // when alive count exceeds the face deck size; re-record the effective count.
   room.actualJokerCount = jokers;
   const hands = dealCards(deck, alive.length);
   alive.forEach((p, i) => { p.hand = hands[i]; p.isSkipped = false; });
@@ -448,11 +483,9 @@ io.on('connection', (socket) => {
     room.targetRank = null;
     clearPile(room);
 
-    // Resolve the joker count once for the whole game. With "Random Jokers"
-    // on, the value is rolled here and never told to anyone until game over.
     let jokerRequest;
     if (room.settings.jokerRandom) {
-      jokerRequest = Math.floor(Math.random() * (JOKER_RANDOM_MAX + 1)); // 0..5
+      jokerRequest = Math.floor(Math.random() * (JOKER_RANDOM_MAX + 1));
     } else {
       jokerRequest = room.settings.jokerCount | 0;
     }
@@ -461,13 +494,14 @@ io.on('connection', (socket) => {
     if (room.settings.liarsBar) {
       startLiarsBarRound(room);
     } else {
-      // Classic mode: 52-card deck + N jokers, then optional Lean Deck and
-      // Loaded Pile (which can trim/seed the combined deck).
       let deck = createDeck();
       for (let i = 0; i < jokerRequest; i++) deck.push(jokerCard(i));
-      deck = shuffle(deck);
       const cardsRemoved = room.settings.cardsRemoved | 0;
-      if (cardsRemoved > 0) deck.splice(0, Math.min(cardsRemoved, deck.length - room.players.length));
+      if (cardsRemoved > 0) {
+        const safeCount = Math.min(cardsRemoved, Math.max(0, deck.length - room.players.length));
+        deck = applyLeanDeck(deck, safeCount);
+      }
+      deck = shuffle(deck);
       const pileSeed = Math.min(room.settings.pileStart | 0, Math.max(0, deck.length - room.players.length));
       const initialPile = pileSeed > 0 ? deck.splice(0, pileSeed) : [];
       const hands = dealCards(deck, room.players.length);
@@ -550,7 +584,6 @@ io.on('connection', (socket) => {
     if (room.lastPlayedCards.length === 0) return emitError('Nothing to challenge.');
     const lastPlayer = room.players.find(p => p.id === room.lastPlayerId);
     const lastCards = room.lastPlayedCards;
-    // Jokers always count as the target rank (wild).
     const wasLie = lastCards.some(c => c.rank !== room.targetRank && c.rank !== 'JOKER');
 
     io.to(room.id).emit('reveal', {
