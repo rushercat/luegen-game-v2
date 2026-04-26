@@ -83,12 +83,80 @@
 </div>
 
 <!-- ============ WAITING ROOM ============ -->
-<div id="waitingRoom" class="hidden max-w-2xl mx-auto pt-12 px-4">
+<div id="waitingRoom" class="hidden max-w-2xl mx-auto pt-12 px-4 pb-10">
   <h2 class="text-3xl font-bold mb-1">Waiting Room</h2>
   <p class="text-emerald-200 mb-6">Room code: <span id="roomCode" class="font-mono text-2xl bg-black/40 px-3 py-1 rounded ml-2"></span></p>
   <div id="playerList" class="bg-black/40 p-4 rounded-xl space-y-2 mb-4"></div>
   <button id="startBtn" class="w-full bg-purple-600 hover:bg-purple-700 transition py-3 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed">Start Game</button>
   <p id="hostHint" class="text-center text-xs text-emerald-200 mt-2"></p>
+
+  <!-- ====== Game Modifiers (host configures, all see) ====== -->
+  <div class="mt-6 bg-black/40 rounded-xl p-4">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="font-bold text-emerald-200">Game Modifiers</h3>
+      <button id="resetModsBtn" class="hidden text-xs bg-white/10 hover:bg-white/20 px-3 py-1 rounded transition">Reset</button>
+    </div>
+    <p id="modsHint" class="text-xs text-emerald-200 mb-3"></p>
+
+    <div class="space-y-3">
+
+      <!-- Lean Deck -->
+      <div class="flex items-center gap-3">
+        <div class="flex-1">
+          <div class="font-bold text-sm">Lean Deck</div>
+          <div class="text-xs text-white/60">Drop random cards before dealing — more pressure to bluff.</div>
+        </div>
+        <input id="modCardsRemoved" type="range" min="0" max="20" value="0" class="w-32 accent-yellow-400 disabled:opacity-40" />
+        <span id="modCardsRemovedVal" class="font-mono text-sm w-8 text-right">0</span>
+      </div>
+
+      <!-- Loaded Pile -->
+      <div class="flex items-center gap-3">
+        <div class="flex-1">
+          <div class="font-bold text-sm">Loaded Pile</div>
+          <div class="text-xs text-white/60">Pile starts with N face-down cards — first wrong LIAR pays heavily.</div>
+        </div>
+        <input id="modPileStart" type="range" min="0" max="10" value="0" class="w-32 accent-yellow-400 disabled:opacity-40" />
+        <span id="modPileStartVal" class="font-mono text-sm w-8 text-right">0</span>
+      </div>
+
+      <!-- Trickle Mode -->
+      <div class="flex items-center gap-3">
+        <div class="flex-1">
+          <div class="font-bold text-sm">Trickle Mode</div>
+          <div class="text-xs text-white/60">Max cards per play (default 3). Lower = longer, more cautious games.</div>
+        </div>
+        <input id="modMaxCards" type="range" min="1" max="3" value="3" class="w-32 accent-yellow-400 disabled:opacity-40" />
+        <span id="modMaxCardsVal" class="font-mono text-sm w-8 text-right">3</span>
+      </div>
+
+      <!-- Toggles -->
+      <label class="flex items-center gap-3 cursor-pointer">
+        <input id="modMysteryHands" type="checkbox" class="accent-yellow-400 w-4 h-4 disabled:opacity-40" />
+        <div class="flex-1">
+          <div class="font-bold text-sm">Mystery Hands</div>
+          <div class="text-xs text-white/60">Hide opponents' card counts (you still see your own).</div>
+        </div>
+      </label>
+
+      <label class="flex items-center gap-3 cursor-pointer">
+        <input id="modSuddenDeath" type="checkbox" class="accent-yellow-400 w-4 h-4 disabled:opacity-40" />
+        <div class="flex-1">
+          <div class="font-bold text-sm">Sudden Death</div>
+          <div class="text-xs text-white/60">A wrong LIAR call instantly ends the game for the challenger.</div>
+        </div>
+      </label>
+
+      <label class="flex items-center gap-3 cursor-pointer">
+        <input id="modReverseOrder" type="checkbox" class="accent-yellow-400 w-4 h-4 disabled:opacity-40" />
+        <div class="flex-1">
+          <div class="font-bold text-sm">Reverse</div>
+          <div class="text-xs text-white/60">Turn order goes the other direction.</div>
+        </div>
+      </label>
+
+    </div>
+  </div>
 </div>
 
 <!-- ============ GAME ============ -->
@@ -96,6 +164,9 @@
   <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 max-w-7xl mx-auto">
 
     <div class="lg:col-span-9">
+      <!-- Active modifiers (chips) -->
+      <div id="activeMods" class="flex flex-wrap gap-1 justify-center mb-3 text-xs"></div>
+
       <!-- Opponents -->
       <div id="opponents" class="flex flex-wrap gap-3 justify-center mb-6"></div>
 
@@ -116,7 +187,7 @@
       <!-- Player hand -->
       <div class="mt-6">
         <div class="flex items-center justify-between mb-2 text-sm text-emerald-200">
-          <span>Your Hand (<span id="handCount">0</span>) — click to select up to 3</span>
+          <span>Your Hand (<span id="handCount">0</span>) — click to select up to <span id="handMax">3</span></span>
           <span id="mySeat" class="bg-yellow-400 text-black px-3 py-1 rounded-full font-bold text-xs"></span>
         </div>
         <div id="hand" class="flex flex-wrap gap-2 justify-center"></div>

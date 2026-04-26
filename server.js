@@ -65,6 +65,34 @@ function makeRoomId() {
   return id;
 }
 
+function clampInt(v, lo, hi) {
+  const n = Math.floor(Number(v));
+  if (Number.isNaN(n)) return lo;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function describeActiveSettings(s) {
+  const out = [];
+  if (s.cardsRemoved > 0) out.push(`Lean Deck (-${s.cardsRemoved})`);
+  if (s.pileStart > 0)    out.push(`Loaded Pile (+${s.pileStart})`);
+  if (s.maxCards < 3)     out.push(`Trickle Mode (max ${s.maxCards})`);
+  if (s.mysteryHands)     out.push('Mystery Hands');
+  if (s.suddenDeath)      out.push('Sudden Death');
+  if (s.reverseOrder)     out.push('Reverse');
+  return out;
+}
+
+function defaultSettings() {
+  return {
+    cardsRemoved: 0,
+    pileStart:    0,
+    maxCards:     3,
+    mysteryHands: false,
+    suddenDeath:  false,
+    reverseOrder: false
+  };
+}
+
 // ---------- Room state ----------
 const rooms = {};
 
@@ -86,18 +114,21 @@ function newRoom(id) {
     winners: [],
     losers: [],
     hostId: null,
-    emptyTimer: null
+    emptyTimer: null,
+    settings: defaultSettings()
   };
 }
 
 function publicState(room) {
+  const hideCounts = room.settings && room.settings.mysteryHands && room.started && !room.gameOver;
   return {
     id: room.id,
     hostId: room.hostId,
+    settings: room.settings,
     players: room.players.map((p, idx) => ({
       id: p.id,
       name: p.name,
-      cardCount: p.hand.length,
+      cardCount: hideCounts && p.hand.length > 0 ? null : p.hand.length,
       isSkipped: !!p.isSkipped,
       connected: !!p.connected,
       seatNumber: room.started ? idx + 1 : null
@@ -124,20 +155,15 @@ function broadcast(room) {
   }
 }
 
-function nextPlayerIdx(room, fromIdx) {
-  return (fromIdx + 1) % room.players.length;
-}
-
-// Walk forward from fromIdx, skipping disconnected players silently and
-// consuming isSkipped flags (with a log line). Returns the next active idx,
-// or fromIdx if no one else is active (safety fallback).
 function findNextActiveIdx(room, fromIdx) {
+  const dir = (room.settings && room.settings.reverseOrder) ? -1 : 1;
+  const n = room.players.length;
   let idx = fromIdx;
-  for (let i = 0; i < room.players.length + 1; i++) {
-    idx = (idx + 1) % room.players.length;
+  for (let i = 0; i < n + 1; i++) {
+    idx = (idx + dir + n) % n;
     const p = room.players[idx];
     if (!p.connected) continue;
-    if (p.hand.length === 0) continue; // already finished — sitting out as a winner
+    if (p.hand.length === 0) continue;
     if (p.isSkipped) {
       p.isSkipped = false;
       room.log.push(`${p.name} is skipped this turn.`);
@@ -165,9 +191,6 @@ function checkLastPlayerStanding(room) {
   if (room.gameOver) return;
   const withCards = room.players.filter(p => p.hand.length > 0);
   const totalPlayers = room.players.length;
-  // For 2-player games: classic rule — last with cards loses (1 left).
-  // For 3+ player games: game ends as soon as only 2 are left holding cards;
-  // BOTH of those two are losers, everyone who emptied is a winner.
   const losingThreshold = totalPlayers >= 3 ? 2 : 1;
   if (totalPlayers > 1 && withCards.length > 0 && withCards.length <= losingThreshold) {
     room.gameOver = true;
@@ -177,7 +200,7 @@ function checkLastPlayerStanding(room) {
       room.log.push(`${withCards[0].name} is left with cards and loses the game.`);
     } else {
       const names = withCards.map(p => p.name).join(' and ');
-      room.log.push(`Only ${names} are left with cards — both lose!`);
+      room.log.push(`Only ${names} are left with cards - both lose!`);
     }
   }
 }
@@ -195,8 +218,6 @@ function findPlayerBySocket(room, socketId) {
   return room.players.find(p => p.socketId === socketId);
 }
 
-// Schedule deletion of a room that has no connected players. Cancels any prior
-// timer when called, so reconnection during the grace period keeps the room alive.
 function scheduleEmptyRoomCleanup(room) {
   if (room.emptyTimer) clearTimeout(room.emptyTimer);
   room.emptyTimer = setTimeout(() => {
@@ -234,7 +255,7 @@ io.on('connection', (socket) => {
   socket.on('joinRoom', ({ roomId, name }) => {
     const room = rooms[(roomId || '').toUpperCase()];
     if (!room) return emitError('Room not found.');
-    if (room.started) return emitError('Game already started. (If you were in this room before, click "Reconnect to last room".)');
+    if (room.started) return emitError('Game already started.');
     if (room.players.length >= 8) return emitError('Room is full (8 max).');
     const player = addPlayer(room, socket, name);
     currentRoomId = room.id;
@@ -242,15 +263,12 @@ io.on('connection', (socket) => {
     broadcast(room);
   });
 
-  // Reconnect to an existing seat after a disconnect / refresh / network blip.
-  // Identity is the (roomId, playerId) pair issued when the player first joined.
   socket.on('resumeSession', ({ roomId, playerId }) => {
     const room = rooms[(roomId || '').toUpperCase()];
     if (!room) return socket.emit('reconnectFailed', { reason: 'Room no longer exists.' });
     const player = room.players.find(p => p.id === playerId);
     if (!player) return socket.emit('reconnectFailed', { reason: 'You are no longer in that room.' });
 
-    // Cancel any pending lobby-grace removal timer for this player.
     if (player.removalTimer) {
       clearTimeout(player.removalTimer);
       player.removalTimer = null;
@@ -273,8 +291,8 @@ io.on('connection', (socket) => {
 
   function addPlayer(room, sock, name) {
     const player = {
-      id: newPlayerId(),  // stable, survives socket reconnects
-      socketId: sock.id,  // current live socket
+      id: newPlayerId(),
+      socketId: sock.id,
       name: (name || '').trim().slice(0, 20) || `Player${room.players.length + 1}`,
       hand: [],
       connected: true,
@@ -287,6 +305,23 @@ io.on('connection', (socket) => {
     return player;
   }
 
+  socket.on('updateSettings', (patch) => {
+    const room = rooms[currentRoomId];
+    if (!room) return;
+    const me = findPlayerBySocket(room, socket.id);
+    if (!me || room.hostId !== me.id) return emitError('Only the host can change settings.');
+    if (room.started) return emitError('Cannot change settings during a game.');
+    if (!patch || typeof patch !== 'object') return;
+    const s = room.settings;
+    if ('cardsRemoved' in patch) s.cardsRemoved = clampInt(patch.cardsRemoved, 0, 20);
+    if ('pileStart'    in patch) s.pileStart    = clampInt(patch.pileStart, 0, 10);
+    if ('maxCards'     in patch) s.maxCards     = clampInt(patch.maxCards, 1, 3);
+    if ('mysteryHands' in patch) s.mysteryHands = !!patch.mysteryHands;
+    if ('suddenDeath'  in patch) s.suddenDeath  = !!patch.suddenDeath;
+    if ('reverseOrder' in patch) s.reverseOrder = !!patch.reverseOrder;
+    broadcast(room);
+  });
+
   socket.on('startGame', () => {
     const room = rooms[currentRoomId];
     if (!room) return;
@@ -295,15 +330,22 @@ io.on('connection', (socket) => {
     if (room.players.length < 2) return emitError('Need at least 2 players.');
     if (room.started) return;
     shuffle(room.players);
-    const deck = shuffle(createDeck());
+    let deck = shuffle(createDeck());
+    const cardsRemoved = room.settings.cardsRemoved | 0;
+    if (cardsRemoved > 0) deck.splice(0, Math.min(cardsRemoved, deck.length - room.players.length));
+    const pileSeed = Math.min(room.settings.pileStart | 0, Math.max(0, deck.length - room.players.length));
+    const initialPile = pileSeed > 0 ? deck.splice(0, pileSeed) : [];
     const hands = dealCards(deck, room.players.length);
     room.players.forEach((p, i) => { p.hand = hands[i]; p.isSkipped = false; });
     room.started = true;
     room.currentTurnIdx = 0;
     room.targetRank = null;
     clearPile(room);
+    room.pile = initialPile;
     const seating = room.players.map((p, i) => `#${i + 1} ${p.name}`).join(', ');
     room.log.push(`Game started - seating: ${seating}.`);
+    const mods = describeActiveSettings(room.settings);
+    if (mods.length) room.log.push(`Modifiers active: ${mods.join(', ')}.`);
     room.log.push(`#1 ${room.players[0].name} chooses the first Target Rank and starts.`);
     if (checkInstantLoss(room)) { broadcast(room); return; }
     broadcast(room);
@@ -335,8 +377,9 @@ io.on('connection', (socket) => {
 
   function playCards(room, player, cardIds) {
     if (!player) return;
-    if (!Array.isArray(cardIds) || cardIds.length < 1 || cardIds.length > 3) {
-      return emitError('Play 1 to 3 cards.');
+    const max = clampInt(room.settings.maxCards, 1, 3);
+    if (!Array.isArray(cardIds) || cardIds.length < 1 || cardIds.length > max) {
+      return emitError(`Play 1 to ${max} card${max === 1 ? '' : 's'}.`);
     }
     const ids = new Set(cardIds);
     const playedCards = [];
@@ -352,7 +395,7 @@ io.on('connection', (socket) => {
     room.lastPlayerId = player.id;
     room.log.push(`${player.name} plays ${playedCards.length} card(s) claiming ${room.targetRank}.`);
     if (player.hand.length === 0) {
-      room.log.push(`🏆 ${player.name} emptied their hand and wins! Play continues without them (they can still be called LIAR on this play).`);
+      room.log.push(`${player.name} emptied their hand and wins! Play continues without them (they can still be called LIAR on this play).`);
     }
 
     const nextIdx = findNextActiveIdx(room, room.currentTurnIdx);
@@ -392,6 +435,16 @@ io.on('connection', (socket) => {
       const challengerIdx = room.players.findIndex(p => p.id === challenger.id);
       clearPile(room);
       room.currentTurnIdx = challengerIdx;
+    } else if (room.settings.suddenDeath) {
+      room.log.push(`SUDDEN DEATH! ${challenger.name} wrongly accused ${lastPlayer.name} and instantly loses.`);
+      clearPile(room);
+      room.gameOver = true;
+      room.losers = [challenger.id];
+      room.winners = room.players
+        .filter(p => p.id !== challenger.id)
+        .map(p => p.id);
+      broadcast(room);
+      return;
     } else {
       const takenCount = room.pile.length;
       challenger.hand.push(...room.pile);
@@ -451,7 +504,7 @@ io.on('connection', (socket) => {
   socket.on('playAgain', () => {
     const room = rooms[currentRoomId];
     if (!room) return;
-    if (!room.gameOver) return; // only resets when the game has finished
+    if (!room.gameOver) return;
     room.started = false;
     room.gameOver = false;
     room.winners = [];
@@ -460,7 +513,6 @@ io.on('connection', (socket) => {
     room.revealedFour = null;
     room.players.forEach(p => { p.hand = []; p.isSkipped = false; });
     clearPile(room);
-    // Drop disconnected players - they didn't come back for a rematch.
     const dropped = room.players.filter(p => !p.connected);
     dropped.forEach(p => {
       if (p.removalTimer) { clearTimeout(p.removalTimer); p.removalTimer = null; }
@@ -507,8 +559,6 @@ io.on('connection', (socket) => {
     io.to(room.id).emit('chat', { name: player.name, message: msg });
   });
 
-  // Explicit "Leave Room" — different from a network drop. Removes the seat
-  // entirely so the player can't auto-reconnect into it later.
   socket.on('leaveRoom', () => {
     const room = rooms[currentRoomId];
     if (!room) return;
@@ -528,12 +578,9 @@ io.on('connection', (socket) => {
       room.hostId = newHost.id;
     }
     if (room.started) {
-      // Mid-game leave: rebalance turn / challenge pointers similar to disconnect.
       if (room.currentTurnIdx >= room.players.length) room.currentTurnIdx = 0;
-      // Indices may have shifted; keep things sane.
       const stillActive = room.players.some(p => p.connected && p.hand.length > 0);
       if (stillActive) {
-        // If the leaver was up, advance to the next active.
         const cur = room.players[room.currentTurnIdx];
         if (!cur || !cur.connected || cur.hand.length === 0) {
           room.currentTurnIdx = findNextActiveIdx(room, room.currentTurnIdx === 0 ? room.players.length - 1 : room.currentTurnIdx - 1);
@@ -557,9 +604,7 @@ io.on('connection', (socket) => {
     player.socketId = null;
 
     if (!room.started) {
-      // Lobby grace period: keep the seat for a minute so refresh / blip can rejoin.
-      // After the timer fires, drop them if they haven't reconnected.
-      room.log.push(`${player.name} disconnected (waiting for them to come back…).`);
+      room.log.push(`${player.name} disconnected (waiting for them to come back...).`);
       if (room.hostId === player.id) {
         const newHost = room.players.find(p => p.connected);
         if (newHost) room.hostId = newHost.id;
@@ -571,9 +616,9 @@ io.on('connection', (socket) => {
         const r = rooms[roomIdSnapshot];
         if (!r) return;
         const p = r.players.find(x => x.id === playerIdSnapshot);
-        if (!p || p.connected) return;  // they came back — don't remove
+        if (!p || p.connected) return;
         r.players = r.players.filter(x => x.id !== playerIdSnapshot);
-        r.log.push(`${p.name} did not return — removed from the lobby.`);
+        r.log.push(`${p.name} did not return - removed from the lobby.`);
         if (r.hostId === playerIdSnapshot && r.players.length > 0) {
           r.hostId = r.players[0].id;
         }
@@ -584,27 +629,23 @@ io.on('connection', (socket) => {
         broadcast(r);
       }, LOBBY_GRACE_MS);
     } else {
-      room.log.push(`${player.name} disconnected — they can rejoin with the room code.`);
-      // Pass the host crown if the host dropped, so the game can be ended/restarted.
+      room.log.push(`${player.name} disconnected - they can rejoin with the room code.`);
       if (room.hostId === player.id) {
         const newHost = room.players.find(p => p.connected);
         if (newHost) room.hostId = newHost.id;
       }
-      // If the disconnect victim was the player whose turn it is, skip them.
       const myIdx = room.players.findIndex(p => p.id === player.id);
       if (myIdx === room.currentTurnIdx) {
         const wasChallenger = room.canChallengeId === player.id;
         room.currentTurnIdx = findNextActiveIdx(room, room.currentTurnIdx);
         room.canChallengeId = wasChallenger ? room.players[room.currentTurnIdx].id : room.canChallengeId;
       } else if (room.canChallengeId === player.id) {
-        // Challenger dropped without acting - pass challenge rights to the next active player.
         const newIdx = findNextActiveIdx(room, myIdx);
         room.canChallengeId = room.players[newIdx].id;
         room.currentTurnIdx = newIdx;
       }
     }
 
-    // If everyone is offline, schedule the room itself for cleanup after a longer grace.
     if (!room.players.some(p => p.connected)) {
       scheduleEmptyRoomCleanup(room);
     }
@@ -614,5 +655,5 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Lugen server listening on port ${PORT}`);
+  console.log(`Lugen server listening on port ${PORT}.`);
 });
