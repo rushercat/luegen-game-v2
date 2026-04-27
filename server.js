@@ -81,6 +81,43 @@ app.get('/api/leaderboard', async (_req, res) => {
   res.json({ users: list });
 });
 
+// ---- Beta prototype: account-linked roguelike progression ----
+
+app.get('/api/beta/progression', async (req, res) => {
+  const user = await auth.getUserByToken(bearerToken(req));
+  if (!user) return res.status(401).json({ error: 'Not signed in.' });
+  const prog = await auth.getBetaProgression(user.id);
+  if (!prog) return res.status(500).json({ error: 'Could not load progression.' });
+  res.json({ progression: prog });
+});
+
+app.post('/api/beta/progression', async (req, res) => {
+  const user = await auth.getUserByToken(bearerToken(req));
+  if (!user) return res.status(401).json({ error: 'Not signed in.' });
+  const { maxFloor, runWon } = req.body || {};
+  const prog = await auth.updateBetaProgression(user.id, { maxFloor, runWon });
+  if (!prog) return res.status(500).json({ error: 'Could not update progression.' });
+  res.json({ progression: prog });
+});
+
+app.post('/api/beta/admin/unlock-all', async (req, res) => {
+  const user = await auth.getUserByToken(bearerToken(req));
+  if (!user) return res.status(401).json({ error: 'Not signed in.' });
+  const prog = await auth.adminUnlockAllProgression(user.id);
+  if (!prog) return res.status(403).json({ error: 'Admin access required.' });
+  res.json({ progression: prog });
+});
+
+// ---- Phase 6: cosmetics + achievements ----
+
+app.get('/api/cosmetics/me', async (req, res) => {
+  const user = await auth.getUserByToken(bearerToken(req));
+  if (!user) return res.status(401).json({ error: 'Not signed in.' });
+  const c = await auth.getCosmetics(user.id);
+  if (!c) return res.status(500).json({ error: 'Could not load cosmetics.' });
+  res.json({ cosmetics: c });
+});
+
 app.post('/api/oauth-link', async (req, res) => {
   try {
     const { supabase_token, username } = req.body || {};

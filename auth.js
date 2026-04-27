@@ -79,7 +79,10 @@ function publicUser(u) {
     liarsbar_lost: u.liarsbar_lost || 0,
     liarsbar_eliminations: u.liarsbar_eliminations || 0,
     has_password: !!u.password_hash,
-    oauth_provider: u.oauth_provider || null
+    oauth_provider: u.oauth_provider || null,
+    beta_max_floor: u.beta_max_floor || 1,
+    beta_run_won: !!u.beta_run_won,
+    is_admin: !!u.is_admin
   };
 }
 
@@ -284,6 +287,94 @@ async function findOrCreateOAuthUser({ provider, sub, email, username }) {
   return { user, isNew: true };
 }
 
+// ---- Beta prototype progression ----
+
+async function getBetaProgression(userId) {
+  if (!enabled || !userId) return null;
+  const { data, error } = await supabase
+    .from('users')
+    .select('beta_max_floor, beta_run_won, is_admin')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return {
+    maxFloor: data.beta_max_floor || 1,
+    runWon: !!data.beta_run_won,
+    isAdmin: !!data.is_admin
+  };
+}
+
+async function updateBetaProgression(userId, opts) {
+  if (!enabled || !userId) return null;
+  const cur = await getBetaProgression(userId);
+  if (!cur) return null;
+  const updates = {};
+  const next = { ...cur };
+  if (opts && typeof opts.maxFloor === 'number' && opts.maxFloor > cur.maxFloor) {
+    updates.beta_max_floor = opts.maxFloor;
+    next.maxFloor = opts.maxFloor;
+  }
+  if (opts && opts.runWon === true && !cur.runWon) {
+    updates.beta_run_won = true;
+    next.runWon = true;
+  }
+  if (Object.keys(updates).length === 0) return cur;
+  const { error } = await supabase.from('users').update(updates).eq('id', userId);
+  if (error) return cur;
+  return next;
+}
+
+async function adminUnlockAllProgression(userId) {
+  if (!enabled || !userId) return null;
+  const cur = await getBetaProgression(userId);
+  if (!cur || !cur.isAdmin) return null;
+  const { error } = await supabase
+    .from('users')
+    .update({ beta_max_floor: 99, beta_run_won: true })
+    .eq('id', userId);
+  if (error) return null;
+  return { maxFloor: 99, runWon: true, isAdmin: true };
+}
+
+// ---- Phase 6: cosmetics + achievements ----
+
+async function getCosmetics(userId) {
+  if (!enabled || !userId) return null;
+  const { data, error } = await supabase
+    .from('users')
+    .select('owned_cosmetics, earned_achievements')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return {
+    owned: Array.isArray(data.owned_cosmetics) ? data.owned_cosmetics : [],
+    achievements: Array.isArray(data.earned_achievements) ? data.earned_achievements : []
+  };
+}
+
+// Grant a cosmetic / achievement (future-use). Idempotent: re-granting is a no-op.
+async function grantCosmetic(userId, cosmeticId) {
+  if (!enabled || !userId || !cosmeticId) return null;
+  const cur = await getCosmetics(userId);
+  if (!cur) return null;
+  if (cur.owned.includes(cosmeticId)) return cur;
+  const next = cur.owned.concat([cosmeticId]);
+  const { error } = await supabase.from('users').update({ owned_cosmetics: next }).eq('id', userId);
+  if (error) return cur;
+  return { owned: next, achievements: cur.achievements };
+}
+
+async function grantAchievement(userId, achievementId) {
+  if (!enabled || !userId || !achievementId) return null;
+  const cur = await getCosmetics(userId);
+  if (!cur) return null;
+  if (cur.achievements.includes(achievementId)) return cur;
+  const next = cur.achievements.concat([achievementId]);
+  const { error } = await supabase.from('users').update({ earned_achievements: next }).eq('id', userId);
+  if (error) return cur;
+  return { owned: cur.owned, achievements: next };
+}
+
 module.exports = {
   enabled,
   oauthEnabled,
@@ -301,5 +392,11 @@ module.exports = {
   isValidUsername,
   verifySupabaseUser,
   findOrCreateOAuthUser,
-  MIN_PASSWORD_LEN
+  MIN_PASSWORD_LEN,
+  getBetaProgression,
+  updateBetaProgression,
+  adminUnlockAllProgression,
+  getCosmetics,
+  grantCosmetic,
+  grantAchievement
 };

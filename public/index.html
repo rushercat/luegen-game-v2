@@ -128,6 +128,27 @@
     </div>
     <div id="errorMsg" class="text-red-300 text-sm text-center min-h-[1.25rem]"></div>
   </div>
+
+  <!-- ============ BETA TESTING TAB ============ -->
+  <div class="mt-4 bg-black/40 backdrop-blur p-4 rounded-2xl shadow-xl border-2 border-dashed border-yellow-400/50">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="bg-yellow-500 text-black text-xs font-extrabold px-2 py-0.5 rounded">BETA</span>
+      <h3 class="font-bold flex-1">Solo Prototype</h3>
+    </div>
+    <p class="text-xs text-emerald-100 mb-3">Test the new roguelike mechanics vs. AI without joining a room. Affixes, jokers, and run decks &mdash; all in development.</p>
+    <button id="betaTestBtn" class="w-full bg-yellow-500 hover:bg-yellow-400 text-black transition py-2 rounded-lg font-bold">Launch Beta Testing</button>
+  </div>
+
+  <!-- ============ COSMETICS TAB ============ -->
+  <div class="mt-4 bg-black/40 backdrop-blur p-4 rounded-2xl shadow-xl border-2 border-dashed border-pink-400/50">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="bg-pink-500 text-black text-xs font-extrabold px-2 py-0.5 rounded">COSMETICS</span>
+      <h3 class="font-bold flex-1">Cosmetics &amp; Unlocks</h3>
+    </div>
+    <p class="text-xs text-emerald-100 mb-3">Card backs, border colors, alt joker art, table backgrounds, victory animations. Earned through play.</p>
+    <button id="cosmeticsOpenBtn" class="w-full bg-pink-500 hover:bg-pink-400 text-black transition py-2 rounded-lg font-bold">Open Cosmetics</button>
+  </div>
+
   <details class="mt-6 bg-black/30 rounded-xl p-4 text-sm">
     <summary class="cursor-pointer font-bold">How to play</summary>
     <ul class="mt-3 space-y-1 list-disc list-inside text-emerald-100">
@@ -143,6 +164,298 @@
       <li>Hold all 4 of any other rank → discard them (revealed for 15s).</li>
     </ul>
   </details>
+</div>
+
+<!-- ============ COSMETICS PANEL ============ -->
+<div id="cosmetics" class="hidden max-w-3xl mx-auto pt-8 px-4 pb-10">
+  <div class="flex items-center gap-3 mb-4">
+    <button id="cosmeticsBackBtn" class="bg-white/10 hover:bg-white/20 transition px-4 py-2 rounded-lg text-sm">&larr; Back to lobby</button>
+    <h2 class="text-3xl font-bold flex-1">Cosmetics</h2>
+    <span class="bg-pink-500 text-black text-xs font-extrabold px-2 py-0.5 rounded">PHASE 6</span>
+  </div>
+
+  <div class="bg-black/40 backdrop-blur p-6 rounded-2xl shadow-xl">
+    <p class="text-emerald-100 mb-2">Cosmetic unlocks express identity without changing balance. Earned through achievements, milestones, and progression.</p>
+    <p class="text-xs text-emerald-300 mb-6">All server-side. Linked to your account.</p>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      <div class="bg-black/30 p-4 rounded-xl">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-2xl">&#127918;</span>
+          <h3 class="font-bold">Card Backs</h3>
+          <span class="ml-auto text-xs bg-yellow-500/30 text-yellow-200 px-2 py-0.5 rounded">Soon</span>
+        </div>
+        <p class="text-xs text-emerald-200 mb-3">Alternative card-back patterns earned by beating bosses, completing achievements, and hitting milestone wins.</p>
+        <div class="text-xs text-rose-300">No cosmetics owned yet</div>
+      </div>
+
+      <div class="bg-black/30 p-4 rounded-xl">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-2xl">&#127912;</span>
+          <h3 class="font-bold">Border Colors</h3>
+          <span class="ml-auto text-xs bg-yellow-500/30 text-yellow-200 px-2 py-0.5 rounded">Soon</span>
+        </div>
+        <p class="text-xs text-emerald-200 mb-3">Custom border tints for run-deck cards. Unlock elite tints (gold, neon, monochrome) by hitting cumulative win counts.</p>
+        <div class="text-xs text-rose-300">No cosmetics owned yet</div>
+      </div>
+
+      <div class="bg-black/30 p-4 rounded-xl">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-2xl">&#10024;</span>
+          <h3 class="font-bold">Affix Effects</h3>
+          <span class="ml-auto text-xs bg-yellow-500/30 text-yellow-200 px-2 py-0.5 rounded">Soon</span>
+        </div>
+        <p class="text-xs text-emerald-200 mb-3">Custom particle/glow looks for each affix. Glass shatters into stained-glass shards by default; unlock alt looks like rusting steel or smoke dissolution.</p>
+        <div class="text-xs text-rose-300">No cosmetics owned yet</div>
+      </div>
+
+      <div class="bg-black/30 p-4 rounded-xl">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-2xl">&#127183;</span>
+          <h3 class="font-bold">Joker Portraits</h3>
+          <span class="ml-auto text-xs bg-yellow-500/30 text-yellow-200 px-2 py-0.5 rounded">Soon</span>
+        </div>
+        <p class="text-xs text-emerald-200 mb-3">Each joker has a default portrait; unlock alts by using that joker in N winning runs.</p>
+        <div class="text-xs text-rose-300">No cosmetics owned yet</div>
+      </div>
+
+      <div class="bg-black/30 p-4 rounded-xl">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-2xl">&#127922;</span>
+          <h3 class="font-bold">Table Backgrounds</h3>
+          <span class="ml-auto text-xs bg-yellow-500/30 text-yellow-200 px-2 py-0.5 rounded">Soon</span>
+        </div>
+        <p class="text-xs text-emerald-200 mb-3">Bar, casino, dive, void, neon-noir. Earned through general progression.</p>
+        <div class="text-xs text-rose-300">No cosmetics owned yet</div>
+      </div>
+
+      <div class="bg-black/30 p-4 rounded-xl">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-2xl">&#127942;</span>
+          <h3 class="font-bold">Victory Animations</h3>
+          <span class="ml-auto text-xs bg-yellow-500/30 text-yellow-200 px-2 py-0.5 rounded">Soon</span>
+        </div>
+        <p class="text-xs text-emerald-200 mb-3">Custom flourishes for empty-hand wins, Jack-curse losses, and run-clear celebrations.</p>
+        <div class="text-xs text-rose-300">No cosmetics owned yet</div>
+      </div>
+
+    </div>
+
+    <div class="bg-black/30 p-4 rounded-xl mt-4 border border-purple-500/30">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-2xl">&#128220;</span>
+        <h3 class="font-bold text-purple-300">Achievements</h3>
+        <span class="ml-auto text-xs bg-yellow-500/30 text-yellow-200 px-2 py-0.5 rounded">Soon</span>
+      </div>
+      <p class="text-xs text-emerald-200 mb-2">Track your accomplishments and earn cosmetics. Examples coming soon: "Win without ever calling Liar," "Win a run with The Rookie," "Hit 4 Jacks and survive."</p>
+      <div id="cosmeticsAchievementsCount" class="text-xs text-rose-300 mt-2">No achievements unlocked yet</div>
+    </div>
+
+    <p id="cosmeticsAuthHint" class="hidden text-xs text-yellow-300 text-center mt-4">Sign in to track cosmetics across devices.</p>
+  </div>
+</div>
+
+<!-- ============ BETA TESTING PANEL ============ -->
+<div id="betaTesting" class="hidden max-w-5xl mx-auto pt-8 px-4 pb-10">
+  <div class="flex items-center gap-3 mb-4">
+    <button id="betaBackBtn" class="bg-white/10 hover:bg-white/20 transition px-4 py-2 rounded-lg text-sm">&larr; Back to lobby</button>
+    <h2 class="text-3xl font-bold flex-1">Beta &middot; Solo Prototype</h2>
+    <span class="bg-yellow-500 text-black text-xs font-extrabold px-2 py-0.5 rounded">PHASE 1</span>
+  </div>
+
+  <div id="betaIntro" class="bg-black/40 backdrop-blur p-6 rounded-2xl shadow-xl">
+    <p class="text-emerald-100 mb-3"><b>Phase 1 &mdash; core round loop.</b> One round of the new design vs. 3 simple bots.</p>
+    <ul class="text-xs text-emerald-200 list-disc list-inside space-y-1 mb-4">
+      <li>30-card round deck: 6 each of A, K, Q, 10, plus 6 Jacks</li>
+      <li>4 players, 5-card hands, random target rank from {A, K, Q, 10}</li>
+      <li>Jacks can never be the target &mdash; only bluffs. 4 Jacks in hand = elimination</li>
+      <li>5-second challenge window for the next player to call Liar</li>
+      <li>First player to empty their hand wins the round</li>
+    </ul>
+    <button id="betaStartBtn" class="bg-yellow-500 hover:bg-yellow-400 text-black px-8 py-3 rounded-lg font-bold transition">Start a round</button>
+  </div>
+
+  <div id="betaGame" class="hidden">
+    <div id="betaStatusBar" class="flex flex-wrap justify-between items-center gap-3 bg-black/40 px-4 py-2 rounded-lg mb-4 text-sm">
+      <div class="flex items-center gap-3">
+        <span>Floor <span id="betaFloor" class="font-bold text-yellow-300">1</span>/9</span>
+        <span class="text-yellow-300">&#128176; <span id="betaGold" class="font-bold">0</span>g</span>
+        <span class="text-emerald-300 text-xs">&#128230; <span id="betaInventoryCount" class="font-bold">0</span></span>
+      </div>
+      <div id="betaRoundScore" class="text-xs sm:text-sm">Round score: &mdash;</div>
+      <div id="betaHearts" class="text-red-400 text-lg tracking-wider">&hearts;&hearts;&hearts;</div>
+    </div>
+
+    <div id="betaJokerRow" class="flex flex-wrap items-center justify-center gap-2 bg-black/30 px-3 py-1.5 rounded-lg mb-4 text-xs">
+      <span class="text-purple-300 font-bold mr-1">Jokers:</span>
+      <div id="betaJokerSlot0" class="inline-flex items-center gap-1 px-2 py-1 rounded bg-black/40"><span class="italic text-white/40">Empty</span></div>
+      <div id="betaJokerSlot1" class="inline-flex items-center gap-1 px-2 py-1 rounded bg-black/40"><span class="italic text-white/40">Empty</span></div>
+      <span id="betaSurveyorInfo" class="hidden ml-2 px-2 py-1 rounded bg-cyan-900/40 text-cyan-200">&#128270; Top: <b id="betaSurveyorCard">?</b></span>
+      <button id="betaTattletaleBtn" class="hidden ml-2 px-3 py-1 rounded bg-purple-700 hover:bg-purple-600 transition font-bold">&#128064; Peek (<span id="betaTattletaleCharges">0</span>)</button>
+    </div>
+
+    <div id="betaConsumablesRow" class="flex flex-wrap items-center justify-center gap-2 bg-black/30 px-3 py-1.5 rounded-lg mb-4 text-xs">
+      <span class="text-amber-300 font-bold mr-1">Consumables:</span>
+      <div id="betaConsumablesList" class="flex flex-wrap gap-2 items-center"></div>
+    </div>
+
+    <div id="betaOpponents" class="flex flex-wrap gap-3 justify-center mb-6"></div>
+
+    <div class="bg-black/30 rounded-2xl p-6 text-center border border-white/10 mb-4">
+      <div class="text-xs uppercase tracking-widest text-yellow-300">Target rank</div>
+      <div id="betaTarget" class="text-7xl font-extrabold my-2">&mdash;</div>
+      <div class="text-sm text-emerald-200">Pile: <span id="betaPileSize" class="font-bold">0</span> cards &middot; Draw pile: <span id="betaDrawSize" class="font-bold">0</span></div>
+      <div id="betaLastPlay" class="mt-2 text-yellow-200 text-sm min-h-[1.25rem]"></div>
+      <div id="betaReveal" class="mt-4 flex flex-wrap justify-center gap-2 min-h-[100px]"></div>
+    </div>
+
+    <div class="text-center mb-4">
+      <span id="betaTurnIndicator" class="inline-block bg-yellow-500 text-black px-5 py-2 rounded-full font-bold"></span>
+      <div id="betaChallengeBar" class="hidden mt-2 max-w-xs mx-auto">
+        <div class="h-2 bg-white/10 rounded-full overflow-hidden">
+          <div id="betaChallengeBarFill" class="h-full bg-red-500 transition-all" style="width:100%"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-6">
+      <div class="text-sm text-emerald-200 mb-2 text-center">Your hand (<span id="betaHandCount">0</span>) &mdash; click to select up to 3</div>
+      <div id="betaHand" class="flex flex-wrap gap-2 justify-center"></div>
+    </div>
+
+    <div class="mt-5 flex flex-wrap gap-2 justify-center items-center">
+      <button id="betaPlayBtn" class="hidden bg-blue-600 hover:bg-blue-700 transition px-6 py-2 rounded-lg font-bold disabled:opacity-40 disabled:cursor-not-allowed">Play Selected</button>
+      <button id="betaLiarBtn" class="hidden bg-red-600 hover:bg-red-700 transition px-6 py-2 rounded-lg font-bold">&#128680; LIAR!</button>
+      <button id="betaPassBtn" class="hidden bg-white/10 hover:bg-white/20 transition px-6 py-2 rounded-lg font-bold">Pass &amp; play</button>
+      <button id="betaUseSmokeBtn" class="hidden bg-gray-600 hover:bg-gray-500 transition px-4 py-2 rounded-lg font-bold text-sm" title="Skip your turn">&#128684; Smoke Bomb (<span id="betaSmokeCount">0</span>)</button>
+      <button id="betaUseCounterfeitBtn" class="hidden bg-purple-700 hover:bg-purple-600 transition px-4 py-2 rounded-lg font-bold text-sm" title="Change the target rank for the rest of the round">&#127922; Counterfeit (<span id="betaCounterfeitCount">0</span>)</button>
+      <button id="betaUseJackBtn" class="hidden bg-amber-700 hover:bg-amber-600 transition px-4 py-2 rounded-lg font-bold text-sm" title="Discard up to 2 Jacks from your hand">&#129355; Jack-be-Nimble (<span id="betaJackBtnCount">0</span>)</button>
+    </div>
+
+    <div id="betaCounterfeitPicker" class="hidden mt-3 bg-black/40 p-3 rounded-lg max-w-md mx-auto">
+      <div class="text-sm text-emerald-200 text-center mb-2">Pick a new target rank:</div>
+      <div id="betaCounterfeitButtons" class="flex flex-wrap gap-2 justify-center mb-2"></div>
+      <div class="text-center"><button id="betaCounterfeitCancelBtn" class="bg-white/10 hover:bg-white/20 transition px-4 py-1 rounded-lg text-sm">Cancel</button></div>
+    </div>
+
+    <div class="mt-6 bg-black/40 p-4 rounded-xl">
+      <h3 class="font-bold mb-2 text-emerald-200">Round log</h3>
+      <div id="betaLog" class="text-xs space-y-1 h-40 overflow-y-auto scrollbar-thin"></div>
+    </div>
+  </div>
+
+  <!-- ============ CHARACTER SELECT ============ -->
+  <div id="betaCharSelect" class="hidden max-w-3xl mx-auto pt-2 pb-10">
+    <h2 class="text-3xl font-bold mb-2 text-center">Choose your character</h2>
+    <p class="text-center text-emerald-200 mb-6">Each has a passive and a starting joker.</p>
+<div id="betaCharGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+    <div class="text-center mt-6 flex flex-wrap gap-2 justify-center">
+      <button id="betaAdminUnlockBtn" class="hidden bg-amber-700 hover:bg-amber-600 transition px-4 py-2 rounded-lg text-sm font-bold">&#128736; Unlock All (Admin)</button>
+      <button id="betaCharCancelBtn" class="bg-white/10 hover:bg-white/20 transition px-4 py-2 rounded-lg text-sm">Back</button>
+    </div>
+  </div>
+
+  <!-- ============ FORK ============ -->
+  <div id="betaFork" class="hidden max-w-3xl mx-auto pt-2 pb-10">
+    <div id="betaForkBanner" class="p-4 rounded-xl mb-6 text-center"></div>
+    <div class="flex flex-wrap items-center justify-center gap-3 mb-4 text-sm text-emerald-200">
+      <span>Hearts: <b id="betaForkHearts">&hearts;&hearts;&hearts;</b></span>
+      <span>&middot;</span>
+      <span class="text-yellow-300">&#128176; <b id="betaForkGold">0</b>g</span>
+      <span>&middot;</span>
+      <span class="text-emerald-300">&#128230; <b id="betaForkInventory">0</b></span>
+    </div>
+    <p class="text-center text-emerald-200 mb-6">Pick your between-floor path. Floor <b id="betaForkNextFloor">2</b> awaits.</p>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <button id="betaForkShopBtn" class="bg-yellow-700 hover:bg-yellow-600 p-6 rounded-xl text-left transition">
+        <div class="text-2xl font-bold mb-1">&#129689; Shop</div>
+        <div class="text-sm opacity-80">Spend gold on consumables.</div>
+      </button>
+      <button id="betaForkRewardBtn" class="bg-emerald-700 hover:bg-emerald-600 p-6 rounded-xl text-left transition">
+        <div class="text-2xl font-bold mb-1">&#128176; Reward</div>
+        <div class="text-sm opacity-80">Take 75g, no questions asked.</div>
+      </button>
+      <button id="betaForkEventBtn" class="bg-purple-700 hover:bg-purple-600 p-6 rounded-xl text-left transition">
+        <div class="text-2xl font-bold mb-1">&#10067; Event</div>
+        <div class="text-sm opacity-80">A random encounter. Risk and reward.</div>
+      </button>
+    </div>
+  </div>
+
+  <!-- ============ SHOP ============ -->
+  <div id="betaShop" class="hidden max-w-2xl mx-auto pt-2 pb-10">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-3xl font-bold">&#129689; Shop</h2>
+      <span class="text-yellow-300 font-bold">&#128176; <span id="betaShopGold">0</span>g</span>
+    </div>
+    <div id="betaShopItems" class="space-y-3 mb-6"></div>
+    <button id="betaShopContinueBtn" class="w-full bg-blue-600 hover:bg-blue-700 transition px-6 py-3 rounded-lg font-bold">Continue to Floor <span id="betaShopNextFloor">2</span></button>
+  </div>
+
+  <!-- ============ REWARD ============ -->
+  <div id="betaReward" class="hidden max-w-md mx-auto pt-2 pb-10 text-center">
+    <h2 class="text-3xl font-bold mb-4">&#128176; Reward</h2>
+
+    <div id="betaRewardOptions" class="space-y-3">
+      <button id="betaRewardGoldBtn" class="w-full bg-yellow-700 hover:bg-yellow-600 transition p-4 rounded-xl text-left">
+        <div class="text-xl font-bold">Take 75g</div>
+        <div class="text-sm opacity-80">Straight to your wallet.</div>
+      </button>
+      <button id="betaRewardUpgradeBtn" class="w-full bg-amber-700 hover:bg-amber-600 transition p-4 rounded-xl text-left">
+        <div class="text-xl font-bold">Upgrade a run-deck card to Gilded</div>
+        <div class="text-sm opacity-80">+2g per turn while held in your hand.</div>
+      </button>
+    </div>
+
+    <div id="betaRewardCardPicker" class="hidden">
+      <p class="text-emerald-200 mb-4">Pick a run-deck card to upgrade:</p>
+      <div id="betaRewardCardList" class="flex flex-wrap gap-2 justify-center mb-4"></div>
+      <button id="betaRewardCancelUpgradeBtn" class="bg-white/10 hover:bg-white/20 transition px-4 py-1 rounded text-sm">Back</button>
+    </div>
+
+    <div id="betaRewardConfirm" class="hidden">
+      <p id="betaRewardConfirmText" class="text-2xl font-bold text-emerald-300 my-6"></p>
+      <button id="betaRewardContinueBtn" class="w-full bg-blue-600 hover:bg-blue-700 transition px-6 py-3 rounded-lg font-bold">Continue to Floor <span id="betaRewardNextFloor">2</span></button>
+    </div>
+  </div>
+
+  <!-- ============ EVENT ============ -->
+  <div id="betaEvent" class="hidden max-w-md mx-auto pt-2 pb-10 text-center">
+    <h2 class="text-3xl font-bold mb-4">&#10067; Event</h2>
+    <p id="betaEventTitle" class="text-2xl font-bold mb-3"></p>
+    <p id="betaEventText" class="text-emerald-200 mb-6"></p>
+    <p id="betaEventResult" class="text-3xl font-extrabold text-yellow-300 my-6"></p>
+    <button id="betaEventContinueBtn" class="w-full bg-blue-600 hover:bg-blue-700 transition px-6 py-3 rounded-lg font-bold">Continue to Floor <span id="betaEventNextFloor">2</span></button>
+  </div>
+
+  <div id="betaTattletalePeek" class="hidden fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4">
+    <div class="bg-purple-900 border-2 border-purple-400 p-8 rounded-2xl shadow-2xl max-w-2xl w-full">
+      <h3 class="text-2xl font-bold mb-4 text-center">&#128064; <span id="betaTattletaleTarget"></span>'s hand</h3>
+      <div id="betaTattletaleCards" class="flex flex-wrap gap-2 justify-center mb-4"></div>
+      <p class="text-center text-purple-200 text-sm">Auto-closes in <span id="betaTattletaleCountdown">4</span>s</p>
+    </div>
+  </div>
+
+  <div id="betaInfoModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-800 border-2 border-purple-400 p-6 rounded-2xl shadow-2xl max-w-sm w-full">
+      <h3 id="betaInfoTitle" class="text-xl font-bold mb-1"></h3>
+      <p id="betaInfoSubtitle" class="text-xs text-emerald-300 mb-3"></p>
+      <p id="betaInfoDesc" class="text-sm text-emerald-100 mb-4"></p>
+      <div class="text-center">
+        <button id="betaInfoCloseBtn" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg text-sm">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="betaResult" class="hidden fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4">
+    <div id="betaResultBox" class="bg-gradient-to-br from-purple-700 via-pink-600 to-rose-600 p-8 rounded-2xl text-center max-w-md shadow-2xl">
+      <h2 id="betaResultTitle" class="text-4xl font-extrabold mb-3"></h2>
+      <p id="betaResultText" class="mb-2"></p>
+      <p id="betaResultSubtitle" class="text-sm text-white/80 mb-6 min-h-[1rem]"></p>
+      <button id="betaResultBtn" class="bg-white text-purple-700 px-8 py-3 rounded-lg font-bold hover:bg-purple-50 transition">Play again</button>
+    </div>
+  </div>
 </div>
 
 <!-- ============ WAITING ROOM ============ -->
@@ -335,6 +648,52 @@
   </div>
 </div>
 
+<script>
+  // Beta Testing tab toggle.
+  document.getElementById('betaTestBtn')?.addEventListener('click', () => {
+    document.getElementById('lobby').classList.add('hidden');
+    document.getElementById('betaTesting').classList.remove('hidden');
+  });
+  document.getElementById('betaBackBtn')?.addEventListener('click', () => {
+    document.getElementById('betaTesting').classList.add('hidden');
+    document.getElementById('lobby').classList.remove('hidden');
+  });
+
+  // Phase 6: Cosmetics tab toggle.
+  document.getElementById('cosmeticsOpenBtn')?.addEventListener('click', () => {
+    document.getElementById('lobby').classList.add('hidden');
+    document.getElementById('cosmetics').classList.remove('hidden');
+    try {
+      const token = localStorage.getItem('lugen-auth-token');
+      if (token) {
+        fetch('/api/cosmetics/me', { headers: { 'Authorization': 'Bearer ' + token } })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => {
+            if (!data || !data.cosmetics) return;
+            const c = data.cosmetics;
+            const ach = document.getElementById('cosmeticsAchievementsCount');
+            if (ach) {
+              if (c.achievements && c.achievements.length > 0) {
+                ach.textContent = c.achievements.length + ' achievement(s) unlocked';
+                ach.className = 'text-xs text-emerald-300 mt-2';
+              } else {
+                ach.textContent = 'No achievements unlocked yet';
+              }
+            }
+          })
+          .catch(() => {});
+      } else {
+        const hint = document.getElementById('cosmeticsAuthHint');
+        if (hint) hint.classList.remove('hidden');
+      }
+    } catch (e) {}
+  });
+  document.getElementById('cosmeticsBackBtn')?.addEventListener('click', () => {
+    document.getElementById('cosmetics').classList.add('hidden');
+    document.getElementById('lobby').classList.remove('hidden');
+  });
+</script>
 <script src="/client.js"></script>
+<script src="/beta.js"></script>
 </body>
 </html>

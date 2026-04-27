@@ -93,23 +93,24 @@ alter table users add column if not exists email text;
 alter table users add column if not exists oauth_provider text;
 alter table users add column if not exists oauth_sub text;
 
--- Allow OAuth-only users (no password). Existing email/password users keep
--- their hash/salt; only the NOT NULL constraint is relaxed.
-alter table users alter column password_hash drop not null;
-alter table users alter column password_salt drop not null;
+-- Allow OAuth-only
 
--- Unique link per (provider, sub) so Google's stable user id maps to one row.
-create unique index if not exists idx_users_oauth
-  on users(oauth_provider, oauth_sub)
-  where oauth_provider is not null and oauth_sub is not null;
 
--- ===== Useful view for the leaderboard =====
-create or replace view leaderboard as
-  select id, username, games_played, games_won, games_lost,
-         case when games_played > 0
-              then round(games_won::numeric / games_played * 100, 1)
-              else 0 end as win_rate
-  from users
-  where games_played > 0
-  order by games_won desc, games_played asc
-  limit 50;
+-- ===== Beta prototype: roguelike progression + admin flag =====
+-- Re-runnable. Track each player's max floor reached and whether they have
+-- ever beaten Floor 9. is_admin lets a flagged account unlock everything for
+-- testing via the admin button in the beta UI.
+alter table users add column if not exists beta_max_floor int not null default 1;
+alter table users add column if not exists beta_run_won boolean not null default false;
+alter table users add column if not exists is_admin boolean not null default false;
+
+-- Promote a specific user to admin (run this after creating an account):
+--   update users set is_admin = true where username = 'YOUR_USERNAME';
+
+
+-- ===== Phase 6: cosmetics + achievements =====
+-- Re-runnable. Cosmetics and achievements are stored as text arrays of
+-- IDs the user owns/has earned. Empty by default; populated as the user
+-- earns them through play.
+alter table users add column if not exists owned_cosmetics text[] not null default '{}';
+alter table users add column if not exists earned_achievements text[] not null default '{}';
