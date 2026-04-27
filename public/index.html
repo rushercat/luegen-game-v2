@@ -190,6 +190,16 @@
         <span id="modMaxCardsVal" class="font-mono text-sm w-8 text-right">3</span>
       </div>
 
+      <!-- Rotating Target -->
+      <div class="flex items-center gap-3">
+        <div class="flex-1">
+          <div class="font-bold text-sm">Rotating Target</div>
+          <div class="text-xs text-white/60">After every N plays, the target rank flips to a random other rank. Cards already on the pile become safe from LIAR. Jacks are never picked, and discarded ranks are off-limits. 0 = off.</div>
+        </div>
+        <input id="modRotateEvery" type="range" min="0" max="10" value="0" class="w-32 accent-yellow-400 disabled:opacity-40" />
+        <span id="modRotateEveryVal" class="font-mono text-sm w-8 text-right">0</span>
+      </div>
+
       <div class="flex items-center gap-3">
         <div class="flex-1">
           <div class="font-bold text-sm">Jokers</div>

@@ -4,8 +4,8 @@ let authToken = null;
 let authUser = null;
 let authConfig = { authEnabled: false, googleEnabled: false, minPasswordLen: 6, supabaseUrl: '', supabaseAnonKey: '' };
 
-let supaClient = null;          // Supabase JS client (only when Google sign-in enabled)
-let pendingSupabaseToken = null;// during username-pick step after Google redirect
+let supaClient = null;
+let pendingSupabaseToken = null;
 
 try { authToken = localStorage.getItem(AUTH_TOKEN_KEY) || null; } catch (_) {}
 
@@ -43,7 +43,8 @@ const DEFAULT_SETTINGS = {
   cardsRemoved: 0, pileStart: 0, maxCards: 3,
   mysteryHands: false, liarsBar: false, shuffleSeats: false,
   jokerCount: 0, jokerRandom: false,
-  wildSuit: '', fogOfWar: false
+  wildSuit: '', fogOfWar: false,
+  rotateTargetEvery: 0
 };
 
 const $ = (id) => document.getElementById(id);
@@ -255,8 +256,6 @@ async function initSupabaseClient() {
   supaClient = window.supabase.createClient(authConfig.supabaseUrl, authConfig.supabaseAnonKey, {
     auth: { detectSessionInUrl: true, persistSession: true, autoRefreshToken: true, flowType: 'implicit' }
   });
-  // If we just landed back from a Google redirect (URL has #access_token=…),
-  // the SDK will surface a session; bridge it to our backend session.
   if (!authToken) {
     try {
       const { data } = await supaClient.auth.getSession();
@@ -274,7 +273,6 @@ async function googleSignIn() {
   try {
     const redirectTo = window.location.origin + window.location.pathname;
     await supaClient.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } });
-    // Browser navigates away to Google, we don't need to handle anything else here.
   } catch (e) {
     const el = $('authError'); if (el) el.textContent = (e && e.message) || 'Could not start Google sign-in.';
   }
@@ -302,9 +300,7 @@ async function tryOAuthLink(supabaseAccessToken, providedUsername) {
     pendingSupabaseToken = null;
     closeAuthModal();
     renderAuthBar(authUser);
-    // Sign out of the Supabase-side session so we don't loop on the next reload.
     if (supaClient) { try { await supaClient.auth.signOut(); } catch (_) {} }
-    // Strip the OAuth fragment from the URL so a refresh stays clean.
     if (window.location.hash && window.location.hash.includes('access_token')) {
       history.replaceState(null, '', window.location.pathname + window.location.search);
     }
@@ -330,7 +326,8 @@ const MOD_PRETTY = {
   wildSuit: 'Wild Suit',
   fogOfWar: 'Fog of War',
   mysteryHands: 'Mystery Hands',
-  shuffleSeats: 'Shuffle Seats'
+  shuffleSeats: 'Shuffle Seats',
+  rotatingTarget: 'Rotating Target'
 };
 
 function renderStatsModal(user) {
@@ -661,6 +658,7 @@ const MOD_FIELDS = [
   { key: 'pileStart',    input: 'modPileStart',    label: 'modPileStartVal',    kind: 'range' },
   { key: 'maxCards',     input: 'modMaxCards',     label: 'modMaxCardsVal',     kind: 'range' },
   { key: 'jokerCount',   input: 'modJokerCount',   label: 'modJokerCountVal',   kind: 'range' },
+  { key: 'rotateTargetEvery', input: 'modRotateEvery', label: 'modRotateEveryVal', kind: 'range' },
   { key: 'mysteryHands', input: 'modMysteryHands', kind: 'check' },
   { key: 'liarsBar',     input: 'modLiarsBar',     kind: 'check' },
   { key: 'shuffleSeats', input: 'modShuffleSeats', kind: 'check' },
@@ -788,6 +786,10 @@ function describeActiveSettingsClient(s, state) {
   if (s.fogOfWar)         out.push('Fog of War');
   if (s.mysteryHands)     out.push('Mystery Hands');
   if (s.shuffleSeats)     out.push('Shuffle Seats');
+  if (s.rotateTargetEvery > 0) {
+    const remain = state && typeof state.playsUntilRotate === 'number' ? state.playsUntilRotate : null;
+    out.push(remain !== null ? `Rotates in ${remain}` : `Rotates every ${s.rotateTargetEvery}`);
+  }
   return out;
 }
 
@@ -864,11 +866,14 @@ function renderGame(state) {
 
   const wildEl = $('wildSuitInfo');
   if (wildEl) {
+    let parts = [];
     if (state.actualWildSuit && SUIT_SYMBOLS[state.actualWildSuit]) {
-      wildEl.innerHTML = `<span class="text-purple-300">Wild Suit:</span> <span class="text-2xl ${SUIT_COLORS[state.actualWildSuit] || ''}">${SUIT_SYMBOLS[state.actualWildSuit]}</span> <span class="text-purple-200">(any rank truthful)</span>`;
-    } else {
-      wildEl.textContent = '';
+      parts.push(`<span class="text-purple-300">Wild Suit:</span> <span class="text-xl ${SUIT_COLORS[state.actualWildSuit] || ''}">${SUIT_SYMBOLS[state.actualWildSuit]}</span>`);
     }
+    if (Array.isArray(state.discardedRanks) && state.discardedRanks.length) {
+      parts.push(`<span class="text-amber-300">Locked:</span> <span class="font-mono">${state.discardedRanks.join(', ')}</span>`);
+    }
+    wildEl.innerHTML = parts.join(' &nbsp;·&nbsp; ');
   }
 
   if (state.lastPlayCount > 0) {
@@ -916,7 +921,14 @@ function renderGame(state) {
         rb.appendChild(btn);
       });
     }
-    [...rb.children].forEach(b => b.disabled = !validSelection);
+    const locked = new Set(Array.isArray(state.discardedRanks) ? state.discardedRanks : []);
+    [...rb.children].forEach(b => {
+      const r = b.dataset.rank;
+      const isLocked = locked.has(r);
+      b.disabled = !validSelection || isLocked;
+      b.title = isLocked ? `${r}s have all been discarded — pick another rank.` : '';
+      b.classList.toggle('line-through', isLocked);
+    });
   } else if (isMyTurn && state.targetRank !== null) {
     rankPicker.classList.add('hidden');
     playBtn.classList.remove('hidden');
@@ -1113,7 +1125,6 @@ function escapeHtml(str) {
   ));
 }
 
-// Boot: load auth config, then init Supabase (if Google enabled), then current user.
 (async () => {
   await loadAuthConfig();
   await initSupabaseClient();

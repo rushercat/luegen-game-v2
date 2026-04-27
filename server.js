@@ -37,8 +37,6 @@ app.get('/api/config', (_req, res) => {
     authEnabled: auth.enabled,
     googleEnabled: auth.oauthEnabled,
     minPasswordLen: auth.MIN_PASSWORD_LEN,
-    // Anon key + URL are safe to expose — that's how Supabase's browser SDK
-    // works. The service key never leaves the server.
     supabaseUrl: auth.oauthEnabled ? auth.supabaseUrl : '',
     supabaseAnonKey: auth.oauthEnabled ? auth.supabaseAnonKey : ''
   });
@@ -83,9 +81,6 @@ app.get('/api/leaderboard', async (_req, res) => {
   res.json({ users: list });
 });
 
-// Bridge a Supabase OAuth JWT into one of our session tokens. The browser
-// posts here once after Google's redirect lands. May reply 409 the very
-// first time so the client can prompt for a username.
 app.post('/api/oauth-link', async (req, res) => {
   try {
     const { supabase_token, username } = req.body || {};
@@ -123,6 +118,7 @@ const LIARS_BAR_GUN_CHAMBERS = 6;
 
 const JOKER_SLIDER_MAX = 10;
 const JOKER_RANDOM_MAX = 5;
+const ROTATE_MAX = 10;
 
 const VALID_WILD_SUITS = ['', 'H', 'D', 'C', 'S', 'random'];
 
@@ -231,6 +227,7 @@ function describeActiveSettings(s) {
   if (s.fogOfWar)         out.push('Fog of War');
   if (s.mysteryHands)     out.push('Mystery Hands');
   if (s.shuffleSeats)     out.push('Shuffle Seats');
+  if (s.rotateTargetEvery > 0) out.push(`Rotates every ${s.rotateTargetEvery}`);
   return out;
 }
 
@@ -245,6 +242,7 @@ function activeModifierKeys(s) {
   if (s.fogOfWar)              out.push('fogOfWar');
   if (s.mysteryHands)          out.push('mysteryHands');
   if (s.shuffleSeats)          out.push('shuffleSeats');
+  if (s.rotateTargetEvery > 0) out.push('rotatingTarget');
   return out;
 }
 
@@ -253,7 +251,8 @@ function defaultSettings() {
     cardsRemoved: 0, pileStart: 0, maxCards: 3,
     mysteryHands: false, liarsBar: false, shuffleSeats: false,
     jokerCount: 0, jokerRandom: false,
-    wildSuit: '', fogOfWar: false
+    wildSuit: '', fogOfWar: false,
+    rotateTargetEvery: 0
   };
 }
 
@@ -267,7 +266,9 @@ function newRoom(id) {
     targetRank: null, started: false, log: [], revealedFour: null,
     gameOver: false, winners: [], losers: [], hostId: null, emptyTimer: null,
     settings: defaultSettings(), actualJokerCount: 0, actualWildSuit: '',
-    statsRecorded: false
+    statsRecorded: false,
+    discardedRanks: [],          // ranks that have been 4-of-a-kind discarded — no longer pickable as target
+    playsSinceTargetChange: 0    // counter for the Rotating Target modifier
   };
 }
 
@@ -281,6 +282,10 @@ function publicState(room) {
     settings: room.settings,
     actualJokerCount: hideJokerCount ? null : room.actualJokerCount,
     actualWildSuit: room.actualWildSuit || '',
+    discardedRanks: Array.isArray(room.discardedRanks) ? room.discardedRanks.slice() : [],
+    playsUntilRotate: (room.settings && room.settings.rotateTargetEvery > 0)
+      ? Math.max(0, room.settings.rotateTargetEvery - (room.playsSinceTargetChange || 0))
+      : null,
     players: room.players.map((p, idx) => ({
       id: p.id,
       name: p.name,
@@ -411,6 +416,7 @@ function checkLastPlayerStanding(room) {
 function clearPile(room) {
   room.pile = []; room.lastPlayedCards = []; room.lastPlayCount = 0;
   room.lastPlayerId = null; room.canChallengeId = null; room.targetRank = null;
+  room.playsSinceTargetChange = 0;
 }
 
 function findPlayerBySocket(room, socketId) {
@@ -435,18 +441,43 @@ function pickRandomTargetRank() {
   return LIARS_BAR_RANKS[Math.floor(Math.random() * LIARS_BAR_RANKS.length)];
 }
 
-function pullTrigger(player) {
-  const before = player.chambers || LIARS_BAR_GUN_CHAMBERS;
-  if (before <= 0) {
-    player.alive = false;
-    return { died: true, chambersBefore: before, chambersAfter: 0, prob: 1 };
+// ---------- Rotating Target ----------
+//
+// Pick a fresh target rank for the running round. Forbidden picks: J (rule),
+// the current rank (forces a real change), and any rank already discarded
+// via 4-of-a-kind (those cards are physically gone from the game). Returns
+// null if nothing valid is left.
+function pickRotatedTarget(room) {
+  const source = room.settings && room.settings.liarsBar ? LIARS_BAR_RANKS : RANKS;
+  const discarded = new Set(room.discardedRanks || []);
+  const candidates = source.filter(r =>
+    r !== 'J' &&
+    r !== room.targetRank &&
+    !discarded.has(r)
+  );
+  if (candidates.length === 0) return null;
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+// Trigger a target rotation: pick a new rank, clear the LIAR window, reset
+// the per-target play counter. Cards already on the pile stay, but the
+// previously played cards become unchallengeable (canChallengeId cleared).
+function rotateTarget(room, reason) {
+  const next = pickRotatedTarget(room);
+  if (!next) {
+    room.log.push('Target rotation skipped — no other valid rank available.');
+    room.playsSinceTargetChange = 0;
+    return;
   }
-  const prob = 1 / before;
-  const died = Math.random() < prob;
-  const after = Math.max(0, before - 1);
-  player.chambers = after;
-  if (died) player.alive = false;
-  return { died, chambersBefore: before, chambersAfter: after, prob };
+  const old = room.targetRank || '?';
+  room.targetRank = next;
+  room.lastPlayedCards = [];
+  room.lastPlayCount = 0;
+  room.lastPlayerId = null;
+  room.canChallengeId = null;
+  room.playsSinceTargetChange = 0;
+  const because = reason ? ` (${reason})` : '';
+  room.log.push(`Target rotated: ${old} → ${next}${because}. Previous plays are now safe from LIAR.`);
 }
 
 function startLiarsBarRound(room) {
@@ -565,6 +596,7 @@ io.on('connection', async (socket) => {
       s.wildSuit = VALID_WILD_SUITS.includes(v) ? v : '';
     }
     if ('fogOfWar'     in patch) s.fogOfWar     = !!patch.fogOfWar;
+    if ('rotateTargetEvery' in patch) s.rotateTargetEvery = clampInt(patch.rotateTargetEvery, 0, ROTATE_MAX);
     broadcast(room);
   });
 
@@ -589,6 +621,8 @@ io.on('connection', async (socket) => {
     room.winners = []; room.losers = [];
     room.currentTurnIdx = 0;
     room.targetRank = null;
+    room.discardedRanks = [];
+    room.playsSinceTargetChange = 0;
     clearPile(room);
 
     let jokerRequest;
@@ -643,7 +677,11 @@ io.on('connection', async (socket) => {
     if (room.players[room.currentTurnIdx].id !== me.id) return emitError('Not your turn.');
     if (!RANKS.includes(targetRank)) return emitError('Invalid rank.');
     if (targetRank === 'J') return emitError('Jacks cannot be the target rank - bluff with them instead.');
+    if ((room.discardedRanks || []).includes(targetRank)) {
+      return emitError(`${targetRank}s have all been discarded — pick another rank.`);
+    }
     room.targetRank = targetRank;
+    room.playsSinceTargetChange = 0;
     room.log.push(`${room.players[room.currentTurnIdx].name} sets Target Rank to ${targetRank}.`);
     playCards(room, me, cardIds);
   });
@@ -684,6 +722,16 @@ io.on('connection', async (socket) => {
     const nextIdx = findNextActiveIdx(room, room.currentTurnIdx);
     room.currentTurnIdx = nextIdx;
     room.canChallengeId = room.players[nextIdx].id;
+
+    // Rotating Target: tick the per-target counter; when it hits N, rotate
+    // immediately so the cards just played become unchallengeable.
+    if (room.settings.rotateTargetEvery > 0) {
+      room.playsSinceTargetChange = (room.playsSinceTargetChange || 0) + 1;
+      if (room.playsSinceTargetChange >= room.settings.rotateTargetEvery) {
+        rotateTarget(room, `every ${room.settings.rotateTargetEvery} plays`);
+      }
+    }
+
     if (checkInstantLoss(room)) { broadcast(room); return; }
     checkLastPlayerStanding(room);
     broadcast(room);
@@ -768,6 +816,20 @@ io.on('connection', async (socket) => {
     broadcast(room);
   });
 
+  function pullTrigger(player) {
+    const before = player.chambers || LIARS_BAR_GUN_CHAMBERS;
+    if (before <= 0) {
+      player.alive = false;
+      return { died: true, chambersBefore: before, chambersAfter: 0, prob: 1 };
+    }
+    const prob = 1 / before;
+    const died = Math.random() < prob;
+    const after = Math.max(0, before - 1);
+    player.chambers = after;
+    if (died) player.alive = false;
+    return { died, chambersBefore: before, chambersAfter: after, prob };
+  }
+
   socket.on('discardFourOfKind', ({ rank }) => {
     const room = rooms[currentRoomId];
     if (!room || !room.started || room.gameOver) return;
@@ -779,9 +841,16 @@ io.on('connection', async (socket) => {
     const matching = player.hand.filter(c => c.rank === rank);
     if (matching.length !== 4) return emitError('You do not have all 4 of that rank.');
     player.hand = player.hand.filter(c => c.rank !== rank);
+    if (!room.discardedRanks.includes(rank)) room.discardedRanks.push(rank);
     room.revealedFour = { playerId: player.id, playerName: player.name, rank, until: Date.now() + FOUR_OF_KIND_MS };
-    room.log.push(`${player.name} discards the four ${rank}s - revealed to everyone for 15s.`);
+    room.log.push(`${player.name} discards the four ${rank}s - revealed to everyone for 15s. ${rank}s can no longer be called as target.`);
     io.to(room.id).emit('fourOfKindReveal', { playerName: player.name, cards: matching, durationMs: FOUR_OF_KIND_MS });
+
+    // If the current target is the rank just discarded, force a rotation now.
+    if (room.targetRank === rank) {
+      rotateTarget(room, `${rank}s discarded`);
+    }
+
     broadcast(room);
     setTimeout(() => {
       const r = rooms[room.id];
@@ -810,6 +879,7 @@ io.on('connection', async (socket) => {
       p.chambers = LIARS_BAR_GUN_CHAMBERS;
     });
     clearPile(room);
+    room.discardedRanks = [];
     room.actualJokerCount = 0;
     room.actualWildSuit = '';
     room.log.push('Host ended the game. Back to the waiting room.');
@@ -831,6 +901,7 @@ io.on('connection', async (socket) => {
       p.chambers = LIARS_BAR_GUN_CHAMBERS;
     });
     clearPile(room);
+    room.discardedRanks = [];
     room.actualJokerCount = 0;
     room.actualWildSuit = '';
     const dropped = room.players.filter(p => !p.connected);
