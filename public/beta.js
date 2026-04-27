@@ -266,6 +266,55 @@
     return true;
   }
 
+  // Phase 8+: floor modifiers (Act 2+ on non-boss floors)
+  const FLOOR_MODIFIERS = {
+    foggy:   { id: 'foggy',   name: 'Foggy',   desc: 'Target rank fades after 5 seconds.' },
+    greedy:  { id: 'greedy',  name: 'Greedy',  desc: '+100% gold, but Jack limit drops to 3.' },
+    brittle: { id: 'brittle', name: 'Brittle', desc: 'Every card is temporarily Glass for this floor.' },
+    echoing: { id: 'echoing', name: 'Echoing', desc: 'Each play: 20% chance the first card is flashed to all players.' },
+    silent:  { id: 'silent',  name: 'Silent',  desc: 'No bot tells are visible this floor.' },
+    tariff:  { id: 'tariff',  name: 'Tariff',  desc: 'Each Liar call you make costs 5g.' },
+  };
+
+  // Phase 8+: AI bot personalities — each teaches a different kind of read
+  const PERSONALITY_CATALOG = {
+    greedy:     { id: 'greedy',     name: 'Greedy',     bluffRate: 0.55, challengeRate: 0.20, tell: 'eyes the gold counter before this play' },
+    coward:     { id: 'coward',     name: 'Coward',     bluffRate: 0.40, challengeRate: 0.05, tell: 'hesitates uneasily' },
+    eager:      { id: 'eager',      name: 'Eager',      bluffRate: 0.50, challengeRate: 0.65, tell: 'fingers twitch over the LIAR button' },
+    methodical: { id: 'methodical', name: 'Methodical', bluffRate: 0.25, challengeRate: 0.20, tell: 're-sorts their hand' },
+    mimic:      { id: 'mimic',      name: 'Mimic',      bluffRate: 0.50, challengeRate: 0.30, tell: 'glances at you' },
+    wildcard:   { id: 'wildcard',   name: 'Wildcard',   bluffRate: 0.50, challengeRate: 0.40, tell: 'shrugs (might mean anything)' },
+  };
+
+  // Phase 8+: bosses on Floor 3, 6, 9
+  const BOSS_CATALOG = {
+    auditor: { id: 'auditor', name: 'The Auditor', floor: 3, bluffRate: 0.30, challengeRate: 1.00, tell: 'always challenges — predictable', desc: 'Challenges every play.' },
+    cheater: { id: 'cheater', name: 'The Cheater', floor: 6, bluffRate: 1.00, challengeRate: 0.30, tell: 'a tiny smirk on 1-in-4 lies', desc: 'Lies on every play.' },
+    lugen:   { id: 'lugen',   name: 'Lugen',       floor: 9, bluffRate: 0.50, challengeRate: 0.50, tell: null, desc: 'No tells. Pure math. The final boss.' },
+  };
+
+  function isBossFloor(f) { return f === 3 || f === 6 || f === 9; }
+  function getBoss(f) {
+    for (const id of Object.keys(BOSS_CATALOG)) {
+      if (BOSS_CATALOG[id].floor === f) return BOSS_CATALOG[id];
+    }
+    return null;
+  }
+  function getCurrentAct() {
+    if (!runState) return 1;
+    if (runState.currentFloor <= 3) return 1;
+    if (runState.currentFloor <= 6) return 2;
+    return 3;
+  }
+  function shouldShowTells() {
+    if (runState && runState.currentFloorModifier === 'silent') return false;
+    return getCurrentAct() <= 2;  // Act 3 = no tells
+  }
+  function getBotPersonality(botIdx) {
+    if (!runState || !runState.botPersonalities) return null;
+    return runState.botPersonalities[botIdx] || null;
+  }
+
   // Phase 7+: relics — permanent passive bonuses (one of each per run)
   const RELIC_CATALOG = {
     crackedCoin: { id: 'crackedCoin', name: 'Cracked Coin', price: 200, desc: 'Each round start: gain 5g × Hearts remaining.' },
@@ -428,6 +477,21 @@
   // Run lifecycle
   // ============================================================
 
+  // Phase 8+: assign random personalities to bots; bosses override on boss floors
+  function assignBotPersonalities() {
+    if (!runState) return;
+    const ids = Object.keys(PERSONALITY_CATALOG);
+    runState.botPersonalities = [null];
+    for (let i = 1; i < NUM_PLAYERS; i++) {
+      runState.botPersonalities[i] = ids[Math.floor(Math.random() * ids.length)];
+    }
+    // Boss floor: bot 1 becomes the boss
+    const boss = getBoss(runState.currentFloor);
+    if (boss) {
+      runState.botPersonalities[1] = boss.id;
+    }
+  }
+
   function startRun(characterId) {
     const character = (characterId && CHARACTER_CATALOG[characterId]) || null;
     runState = {
@@ -444,7 +508,12 @@
       relics: [],
       heartShards: 0,
       loadedDieUsedThisFloor: false,
+      currentFloorModifier: null,    // Phase 8+
+      botPersonalities: [null, null, null, null],  // Phase 8+
     };
+
+    // Assign initial bot personalities
+    assignBotPersonalities();
 
     if (character) {
       if (character.startingGildedA) {
@@ -521,6 +590,14 @@
     const deck = buildDeck();
     const { hands, drawPile } = deal(deck);
     applyJackFairness(hands, drawPile);
+
+    // Phase 8+: Brittle modifier — every card becomes Glass for this round
+    if (runState && runState.currentFloorModifier === 'brittle') {
+      for (const hand of hands) {
+        for (const c of hand) c.affix = 'glass';
+      }
+      for (const c of drawPile) c.affix = 'glass';
+    }
 
     // Phase 5: Gambler — first round of a new floor forces a Cursed card
     // into the human's hand
@@ -617,6 +694,13 @@
 
     triggerGildedTurn();  // Phase 5: first turn triggers Gilded too
     render();
+    // Phase 8+: Foggy — hide target rank after 5 seconds
+    if (runState && runState.currentFloorModifier === 'foggy') {
+      state.foggyHidden = false;
+      setTimeout(() => {
+        if (state) { state.foggyHidden = true; render(); }
+      }, 5000);
+    }
     if (state.currentTurn !== 0) setTimeout(botTurn, BOT_TURN_DELAY_MS);
   }
 
@@ -751,6 +835,16 @@
       hasJoker('tattletale') ? TATTLETALE_CHARGES_PER_FLOOR : 0;
     setMaxFloorReached(runState.currentFloor);
 
+    // Phase 8+: pick floor modifier (Act 2+ only on non-boss floors)
+    if (runState.currentFloor >= 4 && !isBossFloor(runState.currentFloor)) {
+      const ids = Object.keys(FLOOR_MODIFIERS);
+      runState.currentFloorModifier = ids[Math.floor(Math.random() * ids.length)];
+    } else {
+      runState.currentFloorModifier = null;
+    }
+    // Reassign personalities (so each floor feels different)
+    assignBotPersonalities();
+
     if (floorJustFinished >= TOTAL_FLOORS && humanWonFloor) {
       endRun(true);
       return;
@@ -875,9 +969,10 @@
   function applyJackFairness(hands, drawPile) {
     const playerLimitBonus = (runState && runState.character && runState.character.jackLimitBonus) || 0;
     const playerJokerBonus = hasJoker('safetyNet') ? 1 : 0;
+    const greedyDrop = (runState && runState.currentFloorModifier === 'greedy') ? 1 : 0;
     for (let p = 0; p < hands.length; p++) {
       const hand = hands[p];
-      const limit = JACK_LIMIT + (p === 0 ? (playerLimitBonus + playerJokerBonus) : 0);
+      const limit = JACK_LIMIT + (p === 0 ? (playerLimitBonus + playerJokerBonus) : 0) - greedyDrop;
       while (countJacks(hand) >= limit) {
         const jackIdx = hand.findIndex(c => c.rank === 'J');
         const replIdx = drawPile.findIndex(c => c.rank !== 'J');
@@ -984,6 +1079,12 @@
     log(playerLabel(playerIdx) + ' plays ' + cards.length +
         (cards.length === 1 ? ' card' : ' cards') +
         ' as ' + state.targetRank + '.');
+
+    // Phase 8+: Echoing modifier — 20% chance to flash first card to all
+    if (runState && runState.currentFloorModifier === 'echoing' && cards.length > 0 && Math.random() < 0.2) {
+      const c = cards[0];
+      log('Echoing: ' + playerLabel(playerIdx) + "'s first card is a " + c.rank + '.');
+    }
 
     // Phase 5: Mirage is a one-time wildcard — when played, remove it from
     // the human's run deck so it never returns.
@@ -1117,6 +1218,13 @@
     state.challengeOpen = false;
     clearAllTimers();
     document.getElementById('betaChallengeBar').classList.add('hidden');
+
+    // Phase 8+: Tariff modifier — human pays 5g per Liar call
+    if (challengerIdx === 0 && runState && runState.currentFloorModifier === 'tariff') {
+      const cost = Math.min(5, runState.gold);
+      runState.gold -= cost;
+      log('Tariff: Liar call costs ' + cost + 'g.');
+    }
 
     const lp = state.lastPlay;
     const playedCards = state.pile.slice(-lp.count);
@@ -1257,7 +1365,8 @@
     let bonus = (playerIdx === 0 && runState && runState.character)
                  ? (runState.character.jackLimitBonus || 0) : 0;
     if (playerIdx === 0 && hasJoker('safetyNet')) bonus += 1;
-    const limit = JACK_LIMIT + bonus;
+    let limit = JACK_LIMIT + bonus;
+    if (runState && runState.currentFloorModifier === 'greedy') limit -= 1;
     const jacks = countJacks(state.hands[playerIdx]);
     if (jacks >= limit) {
       log(playerLabel(playerIdx) + ' has ' + jacks +
@@ -1357,11 +1466,20 @@
       return;
     }
 
+    // Phase 8+: pull personality (boss takes precedence on boss floors)
+    const persId = runState ? runState.botPersonalities[botIdx] : null;
+    const pers = persId
+      ? (PERSONALITY_CATALOG[persId] || BOSS_CATALOG[persId] || null)
+      : null;
+    const bluffRate = pers ? pers.bluffRate : 0.30;
+
     const target = state.targetRank;
     const matching = hand.filter(c => c.rank === target);
     const nonMatching = hand.filter(c => c.rank !== target);
 
-    const truthful = matching.length > 0 && Math.random() < 0.7;
+    // Phase 8+: bluff if matching available AND personality bluffs OR forced
+    const willBluff = (matching.length === 0) || (Math.random() < bluffRate);
+    const truthful = !willBluff && matching.length > 0;
     let cardsToPlay;
     if (truthful) {
       const max = Math.min(3, matching.length);
@@ -1374,6 +1492,11 @@
       cardsToPlay = pool.slice(0, count);
     }
 
+    // Phase 8+: tell — log a personality cue if Acts 1-2 and tells visible
+    if (pers && pers.tell && shouldShowTells() && Math.random() < (getCurrentAct() === 1 ? 0.7 : 0.35)) {
+      log('[Tell] ' + playerLabel(botIdx) + ' (' + pers.name + ') ' + pers.tell + '.');
+    }
+
     playCards(botIdx, cardsToPlay.map(c => c.id));
   }
 
@@ -1381,7 +1504,17 @@
     if (!state.lastPlay) return false;
     if (hasCursed(botIdx)) return false;  // Phase 5: Cursed blocks Liar
     const lp = state.lastPlay;
-    const base = lp.count === 3 ? 0.40 : lp.count === 2 ? 0.25 : 0.15;
+    // Phase 8+: personality-driven challenge rate
+    const persId = runState ? runState.botPersonalities[botIdx] : null;
+    const pers = persId
+      ? (PERSONALITY_CATALOG[persId] || BOSS_CATALOG[persId] || null)
+      : null;
+    let base = lp.count === 3 ? 0.40 : lp.count === 2 ? 0.25 : 0.15;
+    if (pers) {
+      // Personality multiplier: pers.challengeRate / 0.25 (default baseline)
+      base = base * (pers.challengeRate / 0.25);
+      base = Math.min(1.0, Math.max(0.02, base));
+    }
     return Math.random() < base;
   }
 
@@ -1392,7 +1525,8 @@
   function render() {
     if (!state) return;
 
-    document.getElementById('betaTarget').textContent = state.targetRank;
+    document.getElementById('betaTarget').textContent =
+      (state.foggyHidden && runState && runState.currentFloorModifier === 'foggy') ? '?' : state.targetRank;
     document.getElementById('betaPileSize').textContent = state.pile.length;
     document.getElementById('betaDrawSize').textContent = state.drawPile.length;
     document.getElementById('betaHandCount').textContent = state.hands[0].length;
@@ -1570,7 +1704,15 @@
 
   function renderStatusBar() {
     if (!runState) return;
-    document.getElementById('betaFloor').textContent = runState.currentFloor;
+    let floorText = String(runState.currentFloor);
+    const boss = getBoss(runState.currentFloor);
+    if (boss) {
+      floorText += ' · BOSS: ' + boss.name;
+    } else if (runState.currentFloorModifier && FLOOR_MODIFIERS[runState.currentFloorModifier]) {
+      floorText += ' · ' + FLOOR_MODIFIERS[runState.currentFloorModifier].name;
+    }
+    document.getElementById('betaFloor').textContent = floorText;
+    if (false) document.getElementById('betaFloor').textContent = runState.currentFloor;
     document.getElementById('betaHearts').textContent = heartsString(runState.hearts) +
       (runState.heartShards > 0 ? ' (' + runState.heartShards + '/' + HEART_SHARDS_REQUIRED + ' shards)' : '');
     document.getElementById('betaGold').textContent = runState.gold;
@@ -1637,6 +1779,7 @@
     if (!runState) return amount;
     let mult = (runState.character && runState.character.goldMultiplier) || 1;
     if (hasRelic('ledger')) mult *= LEDGER_GOLD_MULT;
+    if (runState.currentFloorModifier === 'greedy') mult *= 2;  // Phase 8+
     const final = Math.floor(amount * mult);
     runState.gold += final;
     return final;
@@ -1665,10 +1808,22 @@
       const fin = state.finished[i];
       const ringClass = isCurrent ? ' ring-2 ring-yellow-400' :
                          isChallenging ? ' ring-2 ring-red-500' : '';
+      // Phase 8+: personality / boss labels
+      let personaLabel = '';
+      const persId = runState ? runState.botPersonalities[i] : null;
+      if (persId) {
+        const boss = BOSS_CATALOG[persId];
+        if (boss) {
+          personaLabel = '👑 ' + boss.name;
+        } else if (getCurrentAct() === 1 && PERSONALITY_CATALOG[persId]) {
+          personaLabel = PERSONALITY_CATALOG[persId].name;
+        }
+      }
       const status = elim ? '☠ eliminated' :
                      fin ? '✓ finished' :
                      isCurrent ? '▶ playing' :
-                     isChallenging ? '? deciding' : '';
+                     isChallenging ? '? deciding' :
+                     personaLabel;
       const card = document.createElement('div');
       card.className = 'bg-black/40 p-3 rounded-lg text-center min-w-[120px]' + ringClass;
       card.innerHTML =
