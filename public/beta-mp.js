@@ -276,8 +276,7 @@
     if (s.mine && s.mine.peeks && s.mine.peeks.length > 0) {
       for (const peek of s.mine.peeks) {
         if (peek.kind === 'tattletale') {
-          const txt = (peek.payload.cards || []).map(c => c.rank + (c.affix ? '*' : '')).join(' ');
-          alert('Tattletale — ' + peek.payload.target + ":\n" + txt);
+          showTattletaleModal(peek.payload.target, peek.payload.cards || [], peek.payload.ms || 4000);
         } else if (peek.kind === 'coldRead' || peek.kind === 'handMirror') {
           const txt = (peek.payload || []).map(p => p.player + ': ' + p.rank).join('\n');
           alert((peek.kind === 'coldRead' ? 'Cold Read' : 'Hand Mirror') + ':\n' + txt);
@@ -285,6 +284,8 @@
           alert('Eavesdropper - ' + peek.payload.source + ': ' + peek.payload.bucket + ' matches for the target rank.');
         } else if (peek.kind === 'bait') {
           alert('Bait - ' + peek.payload.player + ': ' + peek.payload.rank);
+        } else if (peek.kind === 'echo') {
+          alert("Echo's eye — " + peek.payload.player + "'s first card: " + peek.payload.rank + (peek.payload.affix ? ' (' + peek.payload.affix + ')' : ''));
         } else if (peek.kind === 'tracerPeek') {
           // Show top-3 cards, prompt for new order
           const tops = peek.payload.topCards || [];
@@ -326,6 +327,38 @@
       return;
     }
     socket.emit('beta:useConsumable', { itemId });
+  }
+
+  function showTattletaleModal(targetName, cards, ms) {
+    const modal = document.getElementById('betaMpTattletaleModal');
+    if (!modal) return;
+    document.getElementById('betaMpTattletaleTarget').textContent = targetName || '?';
+    const cardsDiv = document.getElementById('betaMpTattletaleCards');
+    cardsDiv.innerHTML = '';
+    const order = ['A', 'K', 'Q', '10', 'J'];
+    const sorted = cards.slice().sort((a, b) => order.indexOf(a.rank) - order.indexOf(b.rank));
+    for (const c of sorted) {
+      const div = document.createElement('div');
+      let cls = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded';
+      const ring = affixRingClass(c.affix);
+      if (ring) cls += ' ' + ring;
+      div.className = cls;
+      div.textContent = c.rank;
+      if (c.affix) div.title = 'Affix: ' + c.affix;
+      cardsDiv.appendChild(div);
+    }
+    modal.classList.remove('hidden');
+    let remaining = Math.max(1, Math.floor((ms || 4000) / 1000));
+    const cd = document.getElementById('betaMpTattletaleCountdown');
+    cd.textContent = remaining;
+    const interval = setInterval(() => {
+      remaining--;
+      cd.textContent = remaining;
+      if (remaining <= 0) {
+        clearInterval(interval);
+        modal.classList.add('hidden');
+      }
+    }, 1000);
   }
 
   function useTattletale() {

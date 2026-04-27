@@ -196,6 +196,7 @@ function newBetaRoom(id) {
     eventResults: {},       // playerId -> { event, gold }
     currentFloorModifier: null,
     currentBoss: null,
+    echoArmedFor: -1,           // playerIdx armed by Echo (peeks the next opponent's first card)
     counterfeitLockedRanks: {}, // playerId -> bool (locks one target rotation)
     counterfeitUsedRound: {},   // playerId -> bool (once per round)
     sleightUsedRound: {},       // playerId -> bool
@@ -581,6 +582,7 @@ function startRound(room) {
   room.challengeOpen = false;
   room.challengerIdx = -1;
   // Reset per-round flags
+  room.echoArmedFor = -1;
   room.counterfeitUsedRound = {};
   room.counterfeitLockedRanks = {};
   room.sleightUsedRound = {};
@@ -715,6 +717,23 @@ function startRound(room) {
   log(room, `Floor ${room.currentFloor} round — target rank: ${room.targetRank}.`);
   // Gilded trigger for the first player
   triggerGildedTurn(room, room.currentTurnIdx);
+
+  // Cheater boss (Floor 6): auto-play one random card from the first player's hand.
+  if (room.currentBoss && room.currentBoss.id === 'cheater') {
+    const firstP = room.players[room.currentTurnIdx];
+    if (firstP && firstP.hand && firstP.hand.length > 0) {
+      const c = firstP.hand[Math.floor(Math.random() * firstP.hand.length)];
+      firstP.hand = firstP.hand.filter(x => x.id !== c.id);
+      room.pile.push(c);
+      room.lastPlay = { playerIdx: room.currentTurnIdx, claim: room.targetRank, count: 1, cardIds: [c.id] };
+      log(room, `Cheater: ${firstP.name}'s first play is forced (auto-played a card as ${room.targetRank}).`);
+      if (firstP.hand.length === 0) {
+        firstP.finishedThisRound = true;
+        room.placements.push(room.currentTurnIdx);
+      }
+      openChallengeWindow(room);
+    }
+  }
 }
 
 // ---------- Action handling ----------
@@ -757,6 +776,48 @@ function handlePlay(room, playerId, cardIds) {
   // Add to pile
   for (const c of cards) room.pile.push(c);
 
+  // Echo: peek for the previously-armed player on this play (reveals first card).
+  if (room.echoArmedFor >= 0 && room.echoArmedFor !== idx && cards.length > 0) {
+    const peeker = room.players[room.echoArmedFor];
+    if (peeker) {
+      addPendingPeek(peeker, 'echo', { player: p.name, rank: cards[0].rank, affix: cards[0].affix || null });
+      log(room, `Echo's eye: ${peeker.name} sees ${p.name}'s first card.`);
+    }
+    room.echoArmedFor = -1;
+  }
+
+  // Hollow: each Hollow card played → draw a replacement.
+  const hollowCount = cards.filter(c => c.affix === 'hollow').length;
+  if (hollowCount > 0) {
+    let drew = 0;
+    for (let i = 0; i < hollowCount && room.drawPile.length > 0; i++) {
+      p.hand.push(room.drawPile.pop());
+      drew++;
+    }
+    if (drew > 0) log(room, `${p.name} draws +${drew} (Hollow).`);
+  }
+
+  // Echoing floor modifier — 20% chance to publicly flash the first card
+  if (room.currentFloorModifier === 'echoing' && cards.length > 0 && Math.random() < 0.2) {
+    log(room, `Echoing: ${p.name}'s first card is a ${cards[0].rank}.`);
+  }
+
+  // Mirage cards are consumed (already removed when revealed in handleLiar; here
+  // we eagerly remove them from run deck on play so they aren't re-dealt).
+  for (const c of cards) {
+    if (c.affix === 'mirage' && c.owner !== undefined && c.owner >= 0) {
+      const owner = room.players[c.owner];
+      if (owner && owner.runDeck) {
+        owner.runDeck = owner.runDeck.filter(rc => rc.id !== c.id);
+      }
+    }
+  }
+
+  // If any Echo cards were played, arm THIS player to peek the next play.
+  if (cards.some(c => c.affix === 'echo')) {
+    room.echoArmedFor = idx;
+  }
+
   room.lastPlay = {
     playerIdx: idx,
     claim: room.targetRank,
@@ -765,12 +826,15 @@ function handlePlay(room, playerId, cardIds) {
   };
   log(room, `${p.name} plays ${cards.length} card${cards.length === 1 ? '' : 's'} as ${room.targetRank}.`);
 
-  // Check finish
+  // Check finish (after Hollow draws which may un-finish them)
   if (p.hand.length === 0) {
     p.finishedThisRound = true;
     room.placements.push(idx);
     log(room, `${p.name} finished their hand.`);
   }
+
+  // Hollow draws may push player past Jack limit
+  checkJackCurse(room);
 
   // Open challenge window for next active player
   openChallengeWindow(room);
@@ -865,8 +929,14 @@ function handleLiar(room, playerId) {
   const claim = room.lastPlay.claim;
   const playedCards = room.pile.filter(c => lastIds.includes(c.id));
   // Mirage cards count as the target rank (one-time wildcard) — they're NOT lies.
-  // Lugen final-boss flavor: Jacks count as wild for callers (no effect here yet).
-  const wasLie = playedCards.some(c => c.rank !== claim && c.rank !== 'J' && c.affix !== 'mirage');
+  let wasLie;
+  if (room.currentBoss && room.currentBoss.id === 'lugen' && playedCards.length > 0 && playedCards.every(c => c.rank === 'J')) {
+    // Lugen final-boss: pure-Jack plays count as a lie (Jack bluffing is punished here).
+    wasLie = true;
+    log(room, 'Lugen: pure-Jack plays count as a lie.');
+  } else {
+    wasLie = playedCards.some(c => c.rank !== claim && c.rank !== 'J' && c.affix !== 'mirage');
+  }
 
   room.challengeOpen = false;
   if (room.challengeTimer) { clearTimeout(room.challengeTimer); room.challengeTimer = null; }
