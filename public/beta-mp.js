@@ -194,6 +194,262 @@
     }
   }
 
+  function renderGameStatusExtras() {
+    const s = lastState;
+    // Floor modifier / boss badge
+    const badge = document.getElementById('betaMpModBadge');
+    if (badge) {
+      badge.innerHTML = '';
+      if (s.currentBoss) {
+        const b = document.createElement('button');
+        b.className = 'bg-rose-700 hover:bg-rose-600 transition px-2 py-0.5 rounded text-xs font-bold cursor-pointer';
+        b.innerHTML = '&#128081; BOSS: ' + escapeHtml(s.currentBoss.name);
+        b.title = s.currentBoss.desc;
+        b.addEventListener('click', () => alert(s.currentBoss.name + '\n\n' + s.currentBoss.desc));
+        badge.appendChild(b);
+      } else if (s.currentFloorModifierInfo) {
+        const m = s.currentFloorModifierInfo;
+        const b = document.createElement('button');
+        b.className = 'bg-purple-700 hover:bg-purple-600 transition px-2 py-0.5 rounded text-xs font-bold cursor-pointer';
+        b.textContent = m.name;
+        b.title = m.desc;
+        b.addEventListener('click', () => alert(m.name + '\n\n' + m.desc));
+        badge.appendChild(b);
+      }
+    }
+    // Joker row (mine)
+    const jokers = s.mine && s.mine.jokers ? s.mine.jokers : [null, null];
+    for (let i = 0; i < 2; i++) {
+      const slot = document.getElementById('betaMpJokerSlot' + i);
+      if (!slot) continue;
+      const j = jokers[i];
+      slot.innerHTML = j
+        ? ('<button class="text-xs px-2 py-1 rounded bg-purple-900/60 hover:bg-purple-800 text-purple-100" title="' + escapeHtml(j.desc) + '">&#127183; ' + escapeHtml(j.name) + '</button>')
+        : '<span class="text-xs italic text-white/40">Empty</span>';
+    }
+    // Surveyor display
+    const surv = document.getElementById('betaMpSurveyor');
+    if (surv) {
+      if (s.mine && s.mine.surveyorTop) {
+        surv.classList.remove('hidden');
+        surv.innerHTML = '&#128270; Top: <b>' + escapeHtml(s.mine.surveyorTop.rank) + '</b>';
+      } else surv.classList.add('hidden');
+    }
+    // Tattletale button
+    const ttBtn = document.getElementById('betaMpTattletaleBtn');
+    if (ttBtn) {
+      const charges = (s.mine && s.mine.tattletaleCharges) || 0;
+      const hasJoker = (s.mine && s.mine.jokers && s.mine.jokers.some(j => j && j.id === 'tattletale'));
+      ttBtn.classList.toggle('hidden', !hasJoker);
+      ttBtn.disabled = charges <= 0;
+      ttBtn.innerHTML = '&#128064; Tattletale (' + charges + ')';
+    }
+    // Loaded Die button
+    const ldBtn = document.getElementById('betaMpLoadedDieBtn');
+    if (ldBtn) {
+      const hasIt = s.mine && s.mine.relics && s.mine.relics.includes('loadedDie');
+      const used = s.mine && s.mine.loadedDieUsed;
+      ldBtn.classList.toggle('hidden', !hasIt);
+      ldBtn.disabled = !!used;
+      ldBtn.textContent = used ? 'Loaded Die (used)' : 'Loaded Die';
+    }
+    // Consumable inventory
+    const consDiv = document.getElementById('betaMpConsumables');
+    if (consDiv) {
+      const inv = (s.mine && s.mine.inventory) || {};
+      consDiv.innerHTML = '';
+      const ids = Object.keys(inv).filter(id => inv[id] > 0);
+      if (ids.length === 0) {
+        consDiv.innerHTML = '<span class="text-xs italic text-white/40">No consumables.</span>';
+      } else {
+        for (const id of ids) {
+          const btn = document.createElement('button');
+          const labels = { smokeBomb: '&#128168; Smoke Bomb', counterfeit: '&#128276; Counterfeit', jackBeNimble: '&#127183; Jack-be-Nimble' };
+          btn.className = 'bg-amber-700 hover:bg-amber-600 transition px-2 py-1 rounded text-xs font-bold';
+          btn.innerHTML = (labels[id] || id) + ' (' + inv[id] + ')';
+          btn.addEventListener('click', () => useConsumable(id));
+          consDiv.appendChild(btn);
+        }
+      }
+    }
+    // Show one-shot peeks (Cold Read, Hand Mirror, Tattletale)
+    if (s.mine && s.mine.peeks && s.mine.peeks.length > 0) {
+      for (const peek of s.mine.peeks) {
+        if (peek.kind === 'tattletale') {
+          const txt = (peek.payload.cards || []).map(c => c.rank + (c.affix ? '*' : '')).join(' ');
+          alert('Tattletale — ' + peek.payload.target + ":\n" + txt);
+        } else if (peek.kind === 'coldRead' || peek.kind === 'handMirror') {
+          const txt = (peek.payload || []).map(p => p.player + ': ' + p.rank).join('\n');
+          alert((peek.kind === 'coldRead' ? 'Cold Read' : 'Hand Mirror') + ':\n' + txt);
+        }
+      }
+    }
+  }
+
+  function useConsumable(itemId) {
+    if (!socket) return;
+    if (itemId === 'counterfeit') {
+      const newRank = prompt('Counterfeit — change target to (A, K, Q, 10):');
+      if (!newRank) return;
+      socket.emit('beta:useConsumable', { itemId, options: { newRank: newRank.toUpperCase() } });
+    } else {
+      socket.emit('beta:useConsumable', { itemId });
+    }
+  }
+
+  function useTattletale() {
+    if (!socket || !lastState) return;
+    const opts = lastState.players
+      .map((p, i) => ({ p, i }))
+      .filter(({ p }) => p.id !== myPlayerId && !p.eliminated);
+    if (opts.length === 0) { alert('No targets available.'); return; }
+    const labels = opts.map(({ p, i }) => i + ': ' + p.name).join('\n');
+    const choice = prompt('Pick a target index:\n' + labels);
+    if (choice === null) return;
+    const idx = parseInt(choice, 10);
+    if (Number.isNaN(idx)) return;
+    socket.emit('beta:useTattletale', { targetIdx: idx });
+  }
+
+  function renderForkPhase() {
+    const s = lastState;
+    const fork = document.getElementById('betaMpFork');
+    if (!fork) return;
+    fork.classList.remove('hidden');
+    const offer = s.forkOffer || {};
+    const me = (s.mine) || {};
+    const myPick = me.forkPick;
+    const isResolved = myPick && myPick !== 'shop-browsing' && myPick !== null && myPick !== undefined;
+    const isShopBrowsing = myPick === 'shop-browsing';
+
+    let html =
+      '<h3 class="text-xl font-bold mb-2">Floor ' + offer.nextFloor + ' approaches</h3>' +
+      (offer.nextFloorIsBoss && offer.nextBoss
+        ? '<p class="text-rose-300 mb-3">&#128081; Boss next: ' + escapeHtml(offer.nextBoss.name) + ' — ' + escapeHtml(offer.nextBoss.desc) + '</p>'
+        : '') +
+      '<p class="text-emerald-200 mb-3">Pick one fork. Each player chooses independently.</p>';
+
+    if (!isResolved && !isShopBrowsing) {
+      html += '<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">';
+      if (offer.hasShop) {
+        html += '<button data-fork="shop" class="bg-yellow-600 hover:bg-yellow-500 px-4 py-3 rounded-lg font-bold">&#129689; Shop</button>';
+      }
+      if (offer.hasReward) {
+        html += '<button data-fork="reward" class="bg-emerald-600 hover:bg-emerald-500 px-4 py-3 rounded-lg font-bold">&#128176; Reward (+60g)</button>';
+      }
+      if (offer.hasTreasure) {
+        html += '<button data-fork="treasure" class="bg-pink-600 hover:bg-pink-500 px-4 py-3 rounded-lg font-bold">&#127873; Treasure (+120g + Relic)</button>';
+      }
+      if (offer.hasEvent) {
+        html += '<button data-fork="event" class="bg-purple-600 hover:bg-purple-500 px-4 py-3 rounded-lg font-bold">&#10068; Event</button>';
+      }
+      html += '</div>';
+    } else if (isShopBrowsing) {
+      html += '<div class="bg-black/30 p-4 rounded-xl mb-4">' +
+              '<h4 class="font-bold mb-2">Shop</h4>' +
+              '<div class="text-xs text-emerald-200 mb-3">Your gold: <b>' + (s.players.find(p => p.id === myPlayerId) || {}).gold + 'g</b></div>' +
+              '<div id="betaMpShopList" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>' +
+              '</div>';
+    } else if (myPick && myPick !== 'continue') {
+      const labels = { 'reward-resolved': 'You took the Reward.', 'treasure-resolved': 'You took the Treasure.', 'event-resolved': 'Event resolved.', 'shop-browsing': 'Shopping...' };
+      html += '<p class="text-emerald-300 mb-3">' + escapeHtml(labels[myPick] || myPick) + '</p>';
+      if (me.eventResult) {
+        html += '<p class="text-amber-200 mb-3">' + escapeHtml(me.eventResult.name) + ': ' + escapeHtml(me.eventResult.desc) + (me.eventResult.gold ? ' (' + me.eventResult.gold + 'g)' : '') + '</p>';
+      }
+    }
+
+    // Continue button (only after resolved or never picked, but you have to pick first)
+    if (myPick && myPick !== 'shop-browsing') {
+      html += '<button id="betaMpContinueForkBtn" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold">Continue to Floor ' + offer.nextFloor + '</button>';
+    }
+    // Show waiting status
+    const ready = Object.values(s.forkPicks || {}).filter(v => v === 'continue').length;
+    const total = s.players.filter(p => !p.eliminated).length;
+    html += '<p class="text-xs text-white/60 mt-3">' + ready + '/' + total + ' players ready.</p>';
+
+    fork.innerHTML = html;
+
+    // Wire fork buttons
+    fork.querySelectorAll('button[data-fork]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        socket.emit('beta:pickFork', { choice: btn.dataset.fork });
+      });
+    });
+    const cont = document.getElementById('betaMpContinueForkBtn');
+    if (cont) cont.addEventListener('click', () => socket.emit('beta:continueFork'));
+    if (isShopBrowsing) renderShopList();
+  }
+
+  function renderShopList() {
+    const s = lastState;
+    const list = document.getElementById('betaMpShopList');
+    if (!list) return;
+    list.innerHTML = '';
+    const me = s.players.find(p => p.id === myPlayerId);
+    for (const item of (s.shopOffer || [])) {
+      const canAfford = me.gold >= item.price;
+      const myJokers = (s.mine && s.mine.jokers) || [];
+      const equipped = item.type === 'joker' && myJokers.some(j => j && j.id === item.id);
+      const myRelics = (s.mine && s.mine.relics) || [];
+      const ownedRelic = item.type === 'relic' && myRelics.includes(item.id);
+      const slotsFull = item.type === 'joker' && myJokers.every(j => j !== null);
+      const disabled = !item.enabled || !canAfford || equipped || ownedRelic || (item.type === 'joker' && slotsFull);
+      let label = !item.enabled ? 'Soon' : equipped ? 'Equipped' : ownedRelic ? 'Owned' : (slotsFull && item.type === 'joker') ? 'Slots full' : 'Buy';
+      const row = document.createElement('div');
+      row.className = 'relative bg-black/40 p-3 rounded-xl border border-white/10 text-sm';
+      const priceCls = canAfford ? 'bg-yellow-400 text-black' : 'bg-rose-500 text-white';
+      row.innerHTML =
+        '<div class="absolute -top-2 left-3 px-2 py-0.5 rounded-full text-xs font-bold ' + priceCls + '">' + item.price + 'g</div>' +
+        '<div class="font-bold mt-1">' + escapeHtml(item.name) + '</div>' +
+        '<div class="text-xs text-emerald-200 mt-1 mb-2">' + escapeHtml(item.desc) + '</div>' +
+        '<button class="bg-yellow-500 hover:bg-yellow-400 text-black px-3 py-1 rounded font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"' +
+          (disabled ? ' disabled' : '') + '>' + label + '</button>';
+      const btn = row.querySelector('button');
+      if (!disabled) btn.addEventListener('click', () => socket.emit('beta:shopBuy', { itemId: item.id }));
+      list.appendChild(row);
+    }
+  }
+
+  // ==================== Live MP deck inspector ====================
+  function openMpInspector() {
+    if (!lastState || !lastState.mine) return;
+    const modal = document.getElementById('betaMpInspectorModal');
+    if (!modal) return;
+    const order = ['A', 'K', 'Q', '10', 'J'];
+    const myDeck = (lastState.mine.runDeck || []).slice().sort((a, b) =>
+      order.indexOf(a.rank) - order.indexOf(b.rank));
+    const runEl = document.getElementById('betaMpInspectorRun');
+    runEl.innerHTML = '';
+    for (const c of myDeck) {
+      const div = document.createElement('div');
+      let cls = 'card card-face flex items-center justify-center text-xl font-bold text-black rounded';
+      const ring = affixRingClass(c.affix);
+      if (ring) cls += ' ' + ring;
+      div.className = cls;
+      div.textContent = c.rank;
+      div.title = c.rank + (c.affix ? ' (' + c.affix + ')' : '');
+      runEl.appendChild(div);
+    }
+    // Live round summary: hand counts only (we don't see opponents' hands)
+    const sum = document.getElementById('betaMpInspectorRound');
+    sum.innerHTML = '';
+    for (const p of lastState.players) {
+      const row = document.createElement('div');
+      row.className = 'flex items-center justify-between text-xs bg-black/30 px-2 py-1 rounded';
+      row.innerHTML =
+        '<span>' + escapeHtml(p.name) + '</span>' +
+        '<span class="text-emerald-300">' + p.handCount + ' cards · run deck: ' + p.runDeckCount + '</span>';
+      sum.appendChild(row);
+    }
+    document.getElementById('betaMpInspectorPile').textContent = lastState.pileSize;
+    document.getElementById('betaMpInspectorDraw').textContent = lastState.drawSize;
+    modal.classList.remove('hidden');
+  }
+  function closeMpInspector() {
+    const modal = document.getElementById('betaMpInspectorModal');
+    if (modal) modal.classList.add('hidden');
+  }
+
   function renderGame() {
     const s = lastState;
     document.getElementById('betaMpFloor').textContent = s.currentFloor + '/' + s.totalFloors;
@@ -308,6 +564,14 @@
     if (logEl) {
       logEl.innerHTML = (s.log || []).slice(-15).map(l => '<div>' + escapeHtml(l) + '</div>').join('');
       logEl.scrollTop = logEl.scrollHeight;
+    }
+    renderGameStatusExtras();
+
+    // Show/hide fork panel based on phase
+    const forkPanel = document.getElementById('betaMpFork');
+    if (forkPanel) {
+      if (s.phase === 'fork') renderForkPhase();
+      else forkPanel.classList.add('hidden');
     }
   }
 
@@ -428,6 +692,22 @@
       const intro = document.getElementById('betaIntro');
       if (intro) intro.classList.remove('hidden');
     });
+
+    // Inspector
+    const inspBtn = document.getElementById('betaMpInspectorBtn');
+    if (inspBtn) inspBtn.addEventListener('click', openMpInspector);
+    const inspClose = document.getElementById('betaMpInspectorCloseBtn');
+    if (inspClose) inspClose.addEventListener('click', closeMpInspector);
+    const inspModal = document.getElementById('betaMpInspectorModal');
+    if (inspModal) inspModal.addEventListener('click', (e) => {
+      if (e.target === inspModal) closeMpInspector();
+    });
+    // Tattletale
+    const ttBtn = document.getElementById('betaMpTattletaleBtn');
+    if (ttBtn) ttBtn.addEventListener('click', useTattletale);
+    // Loaded Die
+    const ldBtn = document.getElementById('betaMpLoadedDieBtn');
+    if (ldBtn) ldBtn.addEventListener('click', () => socket && socket.emit('beta:useLoadedDie'));
 
     const resultBackBtn = document.getElementById('betaMpResultBackBtn');
     if (resultBackBtn) resultBackBtn.addEventListener('click', () => {

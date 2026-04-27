@@ -1147,6 +1147,98 @@ io.on('connection', async (socket) => {
     if (betaMP.betaRooms[room.id]) betaMP.broadcast(io, room);
   });
 
+  socket.on('beta:pickFork', ({ choice } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.pickFork(room, player.id, choice);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:continueFork', () => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.pickFork(room, player.id, 'continue');
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+    betaMP.maybeAdvanceFromFork(room);
+    if (betaMP.betaRooms[room.id]) betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:shopBuy', ({ itemId } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.shopBuy(room, player.id, itemId);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:useConsumable', ({ itemId, options } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.useConsumable(room, player.id, itemId, options || {});
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:useTattletale', ({ targetIdx } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.useTattletale(room, player.id, targetIdx);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:useLoadedDie', () => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.useLoadedDie(room, player.id);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:adminAddGold', ({ amount } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.adminAddGold(room, player.id, amount);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:adminSetHearts', ({ hearts } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.adminSetHearts(room, player.id, hearts);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:adminSkipFloor', ({ floor } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.adminSkipFloor(room, player.id, floor);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
   socket.on('disconnect', () => {
     // Beta MP disconnect cleanup
     if (currentBetaRoomId) {

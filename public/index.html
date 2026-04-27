@@ -672,10 +672,26 @@
   </div>
 
   <div id="betaMpGame" class="hidden">
-    <div class="flex flex-wrap justify-between items-center gap-3 bg-black/40 px-4 py-2 rounded-lg mb-4 text-sm">
-      <div>Floor <span id="betaMpFloor" class="font-bold text-yellow-300">1/9</span></div>
+    <div class="flex flex-wrap justify-between items-center gap-3 bg-black/40 px-4 py-2 rounded-lg mb-2 text-sm">
+      <div class="flex items-center gap-3">
+        <span>Floor <span id="betaMpFloor" class="font-bold text-yellow-300">1/9</span></span>
+        <span id="betaMpModBadge"></span>
+        <button id="betaMpInspectorBtn" title="Inspect every card in the game (and its affix)" class="bg-purple-700 hover:bg-purple-600 transition px-2 py-0.5 rounded text-xs font-bold">&#127183; Cards</button>
+      </div>
       <div id="betaMpStatus" class="text-emerald-200"></div>
       <button id="betaMpLeaveBtn2" class="bg-rose-600 hover:bg-rose-500 px-3 py-1 rounded text-xs transition" onclick="document.getElementById('betaMpLeaveBtn').click()">Leave</button>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 bg-black/30 px-3 py-1.5 rounded-lg mb-2 text-xs">
+      <span class="text-purple-300 font-bold mr-1">Jokers:</span>
+      <div id="betaMpJokerSlot0" class="inline-flex items-center gap-1 px-2 py-1 rounded bg-black/40"><span class="italic text-white/40">Empty</span></div>
+      <div id="betaMpJokerSlot1" class="inline-flex items-center gap-1 px-2 py-1 rounded bg-black/40"><span class="italic text-white/40">Empty</span></div>
+      <span id="betaMpSurveyor" class="hidden ml-2 px-2 py-1 rounded bg-cyan-900/40 text-cyan-200"></span>
+      <button id="betaMpTattletaleBtn" class="hidden ml-2 px-3 py-1 rounded bg-purple-700 hover:bg-purple-600 transition font-bold disabled:opacity-40 disabled:cursor-not-allowed">&#128064; Tattletale (0)</button>
+      <button id="betaMpLoadedDieBtn" class="hidden ml-2 px-3 py-1 rounded bg-pink-700 hover:bg-pink-600 transition font-bold disabled:opacity-40 disabled:cursor-not-allowed">Loaded Die</button>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 bg-black/30 px-3 py-1.5 rounded-lg mb-4 text-xs">
+      <span class="text-amber-300 font-bold mr-1">Consumables:</span>
+      <div id="betaMpConsumables" class="flex flex-wrap gap-2 items-center"><span class="text-xs italic text-white/40">No consumables.</span></div>
     </div>
     <div id="betaMpPlayers" class="flex flex-wrap gap-3 justify-center mb-4"></div>
     <div class="bg-black/30 rounded-2xl p-6 text-center border border-white/10 mb-4">
@@ -692,6 +708,8 @@
     </div>
     <div id="betaMpLog" class="bg-black/30 rounded-lg p-3 text-xs max-h-40 overflow-y-auto"></div>
   </div>
+
+  <div id="betaMpFork" class="hidden bg-black/40 backdrop-blur p-6 rounded-2xl shadow-xl mb-4"></div>
 
   <div id="betaMpResult" class="hidden bg-black/40 backdrop-blur p-6 rounded-2xl shadow-xl text-center">
     <h3 id="betaMpResultTitle" class="text-3xl font-extrabold mb-3"></h3>
@@ -1097,6 +1115,27 @@
     });
   })();
 </script>
+
+  <div id="betaMpInspectorModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-800 border-2 border-purple-400 p-6 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+      <div class="flex items-start justify-between mb-2">
+        <div>
+          <h3 class="text-xl font-bold">Card Inspector (PvP)</h3>
+          <p class="text-xs text-emerald-200">Your personal deck and the live round summary.</p>
+        </div>
+        <button id="betaMpInspectorCloseBtn" class="bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg text-sm">&times;</button>
+      </div>
+      <div class="mb-4">
+        <h4 class="text-sm font-bold text-yellow-200 mb-1">Your personal deck</h4>
+        <div id="betaMpInspectorRun" class="flex flex-wrap gap-2"></div>
+      </div>
+      <div class="mb-4">
+        <h4 class="text-sm font-bold text-cyan-200 mb-1">Round summary</h4>
+        <div class="text-xs text-white/60 mb-2">Pile: <span id="betaMpInspectorPile" class="font-bold text-emerald-300">0</span> &middot; Draw: <span id="betaMpInspectorDraw" class="font-bold text-emerald-300">0</span></div>
+        <div id="betaMpInspectorRound" class="space-y-1"></div>
+      </div>
+    </div>
+  </div>
 <script src="/client.js"></script>
 <script src="/beta.js"></script>
 <script src="/beta-mp.js"></script>
