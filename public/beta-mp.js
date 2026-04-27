@@ -281,6 +281,8 @@
         } else if (peek.kind === 'coldRead' || peek.kind === 'handMirror') {
           const txt = (peek.payload || []).map(p => p.player + ': ' + p.rank).join('\n');
           alert((peek.kind === 'coldRead' ? 'Cold Read' : 'Hand Mirror') + ':\n' + txt);
+        } else if (peek.kind === 'eavesdropper') {
+          alert('Eavesdropper - ' + peek.payload.source + ': ' + peek.payload.bucket + ' matches for the target rank.');
         }
       }
     }
@@ -386,6 +388,56 @@
     if (!list) return;
     list.innerHTML = '';
     const me = s.players.find(p => p.id === myPlayerId);
+    // Pending-service picker — show above the shop grid until applied
+    const pending = s.mine && s.mine.pendingService;
+    if (pending) {
+      const overlay = document.createElement('div');
+      overlay.className = 'col-span-full bg-amber-900/40 border border-amber-400 p-3 rounded-xl mb-3';
+      overlay.innerHTML = '<div class="font-bold text-amber-200 mb-2">Apply: ' + escapeHtml(pending.itemId) + '</div>';
+      // Engraver: rank picker. Other services: card picker.
+      if (pending.itemId === 'engraver') {
+        const row = document.createElement('div');
+        row.className = 'flex gap-2 flex-wrap items-center';
+        for (const r of ['A', 'K', 'Q', '10']) {
+          const b = document.createElement('button');
+          b.className = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded cursor-pointer hover:scale-105';
+          b.textContent = r;
+          b.addEventListener('click', () => socket.emit('beta:applyService', { target: { rank: r } }));
+          row.appendChild(b);
+        }
+        overlay.appendChild(row);
+      } else {
+        const wrap = document.createElement('div');
+        wrap.className = 'flex flex-wrap gap-2 items-center';
+        const myDeck = (s.mine && s.mine.runDeck) || [];
+        const isStripper = pending.itemId === 'stripper';
+        const eligible = isStripper
+          ? myDeck.filter(c => c.rank !== 'J')
+          : myDeck.filter(c => !c.affix);
+        if (eligible.length === 0) {
+          wrap.innerHTML = '<span class="text-xs italic text-rose-300">No eligible cards in your run deck.</span>';
+        } else {
+          for (const c of eligible) {
+            const b = document.createElement('button');
+            let cls = 'card card-face flex items-center justify-center text-xl font-bold text-black rounded cursor-pointer hover:scale-105';
+            const ring = affixRingClass(c.affix);
+            if (ring) cls += ' ' + ring;
+            b.className = cls;
+            b.textContent = c.rank;
+            if (c.affix) b.title = 'Affix: ' + c.affix;
+            b.addEventListener('click', () => socket.emit('beta:applyService', { target: { cardId: c.id } }));
+            wrap.appendChild(b);
+          }
+        }
+        overlay.appendChild(wrap);
+      }
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'mt-2 bg-white/10 hover:bg-white/20 px-3 py-1 rounded text-xs';
+      cancelBtn.textContent = 'Cancel (refund)';
+      cancelBtn.addEventListener('click', () => socket.emit('beta:cancelService'));
+      overlay.appendChild(cancelBtn);
+      list.appendChild(overlay);
+    }
     for (const item of (s.shopOffer || [])) {
       const canAfford = me.gold >= item.price;
       const myJokers = (s.mine && s.mine.jokers) || [];

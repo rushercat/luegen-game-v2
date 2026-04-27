@@ -87,13 +87,13 @@ const SHOP_ITEMS = [
   { id: 'smokeBomb',     name: 'Smoke Bomb',          price: 35,  desc: 'Skip your turn (consumable).', enabled: true, type: 'consumable' },
   { id: 'counterfeit',   name: 'Counterfeit',         price: 35,  desc: 'Change target rank now and lock through next LIAR (consumable).', enabled: true, type: 'consumable' },
   { id: 'jackBeNimble',  name: 'Jack-be-Nimble',      price: 90,  desc: 'Discard up to 2 Jacks from your hand (consumable).', enabled: true, type: 'consumable' },
-  { id: 'glassShard',    name: 'Glass Shard',         price: 30,  desc: 'Apply Glass to a run-deck card (service — not yet wired in PvP).', enabled: false, type: 'service' },
+  { id: 'glassShard',    name: 'Glass Shard',         price: 30,  desc: 'Apply Glass to a run-deck card.', enabled: true, type: 'service' },
   { id: 'forger',        name: 'Forger',              price: 100, desc: 'Clone a run-deck card onto another (service — not yet wired in PvP).', enabled: false, type: 'service' },
-  { id: 'spikedWire',    name: 'Spiked Wire',         price: 30,  desc: 'Apply Spiked to a run-deck card (service — not yet wired in PvP).', enabled: false, type: 'service' },
-  { id: 'steelPlating',  name: 'Steel Plating',       price: 50,  desc: 'Apply Steel to a run-deck card (service — not yet wired in PvP).', enabled: false, type: 'service' },
-  { id: 'mirageLens',    name: 'Mirage Lens',         price: 200, desc: 'Apply Mirage to a run-deck card (service — not yet wired in PvP).', enabled: false, type: 'service' },
-  { id: 'stripper',      name: 'Stripper',            price: 60,  desc: 'Remove a run-deck card (service — not yet wired in PvP).', enabled: false, type: 'service' },
-  { id: 'engraver',      name: 'Engraver',            price: 80,  desc: 'Add a vanilla card to your run deck (service — not yet wired in PvP).', enabled: false, type: 'service' },
+  { id: 'spikedWire',    name: 'Spiked Wire',         price: 30,  desc: 'Apply Spiked to a run-deck card.', enabled: true, type: 'service' },
+  { id: 'steelPlating',  name: 'Steel Plating',       price: 50,  desc: 'Apply Steel to a run-deck card.', enabled: true, type: 'service' },
+  { id: 'mirageLens',    name: 'Mirage Lens',         price: 200, desc: 'Apply Mirage to a run-deck card.', enabled: true, type: 'service' },
+  { id: 'stripper',      name: 'Stripper',            price: 60,  desc: 'Permanently remove a run-deck card (no Jacks).', enabled: true, type: 'service' },
+  { id: 'engraver',      name: 'Engraver',            price: 80,  desc: 'Add a vanilla card to your run deck.', enabled: true, type: 'service' },
   { id: 'tracer',        name: 'Tracer',              price: 40,  desc: 'See and rearrange top 3 of draw pile (service — not yet wired in PvP).', enabled: false, type: 'service' },
   { id: 'devilsBargain', name: "Devil's Bargain",     price: 55,  desc: 'Drop a hand card; draw a Cursed card (service — not yet wired in PvP).', enabled: false, type: 'service' },
   { id: 'magnet',        name: 'Magnet',              price: 75,  desc: 'Give a hand card to a random opponent (service — not yet wired in PvP).', enabled: false, type: 'service' },
@@ -381,6 +381,90 @@ function applyGoldGain(p, n, reason) {
   p.gold = (p.gold || 0) + amt;
   return amt;
 }
+const GOLD_PER_GILDED_PER_TURN = 2;
+const SPIKED_DRAWS_ON_PICKUP = 1;
+const GLASS_BURN_RANDOM = 2;
+
+// Gilded — fired when a player begins their turn. Pays out for each Gilded
+// card currently in their hand.
+function triggerGildedTurn(room, playerIdx) {
+  const p = room.players[playerIdx];
+  if (!p || p.eliminated || !p.hand) return;
+  let gilded = 0;
+  for (const c of p.hand) if (c.affix === 'gilded') gilded++;
+  if (gilded > 0) {
+    const got = applyGoldGain(p, gilded * GOLD_PER_GILDED_PER_TURN, 'gilded');
+    if (got > 0) log(room, `${p.name} (Gilded × ${gilded}): +${got}g.`);
+  }
+}
+
+// Spiked + Glass + Steel resolution when a player picks up the pile.
+// Mutates the pile array in place (cards removed by Glass burns are gone).
+// Returns the (possibly trimmed) pile to be appended to the picker's hand.
+function applyPickupAffixes(room, picker, pile) {
+  if (!pile || pile.length === 0) return pile;
+  // 1) Spiked: each Spiked in the pile = picker draws +1 from draw pile.
+  let spikedCount = pile.filter(c => c.affix === 'spiked').length;
+  let drew = 0;
+  while (spikedCount > 0 && room.drawPile.length > 0) {
+    picker.hand.push(room.drawPile.pop());
+    spikedCount--;
+    drew++;
+  }
+  if (drew > 0) log(room, `Spiked: ${picker.name} draws +${drew}.`);
+  // 2) Glass: each Glass card burns itself + GLASS_BURN_RANDOM random
+  //    non-Steel pile cards. Track burned run-deck cards on the OWNER for
+  //    Iron Stomach restoration at end of round.
+  const glassCards = pile.filter(c => c.affix === 'glass');
+  for (const glass of glassCards) {
+    if (!pile.includes(glass)) continue;  // already burned by another Glass
+    // Remove the Glass card itself
+    const gi = pile.indexOf(glass);
+    if (gi !== -1) pile.splice(gi, 1);
+    // Track Iron Stomach burns (only for run-deck cards owned by humans)
+    if (glass.owner !== undefined && glass.owner >= 0) {
+      const owner = room.players[glass.owner];
+      if (owner) owner._ironStomachBurned = (owner._ironStomachBurned || []).concat([glass.id]);
+    }
+    // Pick GLASS_BURN_RANDOM random non-Steel cards from the remaining pile
+    const burnable = pile.filter(c => c.affix !== 'steel');
+    const sh = shuffle(burnable);
+    const targets = sh.slice(0, GLASS_BURN_RANDOM);
+    for (const t of targets) {
+      const ti = pile.indexOf(t);
+      if (ti !== -1) pile.splice(ti, 1);
+      if (t.owner !== undefined && t.owner >= 0) {
+        const owner = room.players[t.owner];
+        if (owner) owner._ironStomachBurned = (owner._ironStomachBurned || []).concat([t.id]);
+      }
+    }
+    log(room, `Glass: burned 1 + ${targets.length} random non-Steel pile card${targets.length === 1 ? '' : 's'}.`);
+  }
+  return pile;
+}
+
+// Iron Stomach: at end of round, restore burned run-deck cards as Steel.
+function applyIronStomach(room) {
+  for (const p of room.players) {
+    if (!playerHasRelic(p, 'ironStomach')) {
+      p._ironStomachBurned = [];
+      continue;
+    }
+    const ids = p._ironStomachBurned || [];
+    if (ids.length === 0) continue;
+    const seen = new Set();
+    let restored = 0;
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const card = (p.runDeck || []).find(c => c.id === id);
+      if (card) { card.affix = 'steel'; restored++; }
+    }
+    if (restored > 0) log(room, `${p.name} - Iron Stomach: restored ${restored} burned card${restored === 1 ? '' : 's'} as Steel.`);
+    p._ironStomachBurned = [];
+  }
+}
+
 function regenerateShopOffer(room) {
   const consumables = SHOP_ITEMS.filter(i => i.type === 'consumable' || i.type === 'service');
   const enabledConsumables = consumables.filter(i => i.enabled);
@@ -567,6 +651,23 @@ function startRound(room) {
     }
   }
 
+  // Eavesdropper joker: every 2 rounds, fuzzy match count from previous player
+  for (const p of room.players) {
+    if (!playerHasJoker(p, 'eavesdropper')) continue;
+    const totalRounds = room.players.reduce((a, pp) => a + (pp.roundsWon || 0), 0);
+    if (totalRounds - (p.eavesdropperLastFiredRound || -99) >= 2) {
+      // The "previous player" is the one to our LEFT in seating order
+      const myIdx = room.players.indexOf(p);
+      const prev = room.players[(myIdx + room.players.length - 1) % room.players.length];
+      if (prev && prev.hand && prev.hand.length > 0) {
+        const matches = prev.hand.filter(c => c.rank === room.targetRank).length;
+        const bucket = matches === 0 ? 'NONE' : matches <= 2 ? 'SOME' : 'MANY';
+        addPendingPeek(p, 'eavesdropper', { source: prev.name, bucket });
+        p.eavesdropperLastFiredRound = totalRounds;
+      }
+    }
+  }
+
   // Cold Read joker: see 1 random card from each opponent
   for (const p of room.players) {
     if (playerHasJoker(p, 'coldRead')) {
@@ -602,6 +703,8 @@ function startRound(room) {
     if (!room.players[i].eliminated) { room.currentTurnIdx = i; break; }
   }
   log(room, `Floor ${room.currentFloor} round — target rank: ${room.targetRank}.`);
+  // Gilded trigger for the first player
+  triggerGildedTurn(room, room.currentTurnIdx);
 }
 
 // ---------- Action handling ----------
@@ -704,8 +807,27 @@ function handlePassNoChallengeInternal(room) {
   if (activeCount(room) <= 1) {
     return endRoundIfDone(room);
   }
+  // Black Hole joker: successful Jack bluff → delete one non-Jack from hand
+  if (room.lastPlay) {
+    const lp = room.players[room.lastPlay.playerIdx];
+    if (lp && playerHasJoker(lp, 'blackHole')) {
+      const lastIds = room.lastPlay.cardIds || [];
+      const playedCards = room.pile.filter(c => lastIds.includes(c.id));
+      const allJacks = playedCards.length > 0 && playedCards.every(c => c.rank === 'J');
+      if (allJacks) {
+        const nonJ = (lp.hand || []).filter(c => c.rank !== 'J');
+        if (nonJ.length > 0) {
+          const target = nonJ[Math.floor(Math.random() * nonJ.length)];
+          lp.hand = lp.hand.filter(c => c.id !== target.id);
+          log(room, `${lp.name} - Black Hole: deleted a ${target.rank} from hand.`);
+        }
+      }
+    }
+  }
   // Advance turn to next active player AFTER the challenger position
   room.currentTurnIdx = findNextActiveIdx(room, room.challengerIdx - 1);
+  // Gilded trigger for the new active player
+  triggerGildedTurn(room, room.currentTurnIdx);
   return { ok: true };
 }
 
@@ -717,10 +839,24 @@ function handleLiar(room, playerId) {
   if (idx !== room.challengerIdx) return { error: 'Not your call.' };
   if (!room.lastPlay) return { error: 'No play to challenge.' };
 
+  // Cursed in hand blocks the challenger from calling LIAR
+  if ((p.hand || []).some(c => c.affix === 'cursed')) {
+    return { error: 'A Cursed card in your hand blocks you from calling LIAR.' };
+  }
+
+  // Tariff floor modifier — each LIAR call costs 5g
+  if (room.currentFloorModifier === 'tariff') {
+    const cost = Math.min(p.gold || 0, 5);
+    p.gold = (p.gold || 0) - cost;
+    log(room, `Tariff: ${p.name} pays ${cost}g for the LIAR call.`);
+  }
+
   const lastIds = room.lastPlay.cardIds || [];
   const claim = room.lastPlay.claim;
   const playedCards = room.pile.filter(c => lastIds.includes(c.id));
-  const wasLie = playedCards.some(c => c.rank !== claim && c.rank !== 'J');
+  // Mirage cards count as the target rank (one-time wildcard) — they're NOT lies.
+  // Lugen final-boss flavor: Jacks count as wild for callers (no effect here yet).
+  const wasLie = playedCards.some(c => c.rank !== claim && c.rank !== 'J' && c.affix !== 'mirage');
 
   room.challengeOpen = false;
   if (room.challengeTimer) { clearTimeout(room.challengeTimer); room.challengeTimer = null; }
@@ -730,22 +866,69 @@ function handleLiar(room, playerId) {
   const liarP = room.players[liarIdx];
   const challengerP = p;
 
+  // Mirage: any Mirage card revealed is consumed — remove from the liarP run deck
+  for (const c of playedCards) {
+    if (c.affix === 'mirage' && c.owner !== undefined && c.owner >= 0) {
+      const owner = room.players[c.owner];
+      if (owner && owner.runDeck) {
+        owner.runDeck = owner.runDeck.filter(rc => rc.id !== c.id);
+      }
+    }
+  }
+
+  // Spiked Trap joker: truth-teller + challenged → challenger draws +3
+  if (!wasLie && playerHasJoker(liarP, 'spikedTrap')) {
+    let drew = 0;
+    while (drew < SPIKED_TRAP_DRAWS && room.drawPile.length > 0) {
+      challengerP.hand.push(room.drawPile.pop());
+      drew++;
+    }
+    if (drew > 0) log(room, `${liarP.name} - Spiked Trap: ${challengerP.name} draws +${drew}.`);
+  }
+
   if (wasLie) {
-    // Liar was lying → liar takes the pile back to hand
     log(room, `${challengerP.name} called LIAR — caught! ${liarP.name} takes the pile back.`);
-    for (const c of room.pile) liarP.hand.push(c);
+    let pile = room.pile.slice();
+    // Scapegoat joker: caught lying with Jack → Jack goes to challenger
+    if (playerHasJoker(liarP, 'scapegoat')) {
+      const jacks = playedCards.filter(c => c.rank === 'J');
+      if (jacks.length > 0) {
+        for (const j of jacks) {
+          const i = pile.indexOf(j);
+          if (i !== -1) {
+            pile.splice(i, 1);
+            challengerP.hand.push(j);
+          }
+        }
+        log(room, `${liarP.name} - Scapegoat: ${jacks.length} Jack${jacks.length === 1 ? '' : 's'} sent to ${challengerP.name}.`);
+      }
+    }
+    // Apply pickup affixes (Spiked draws + Glass burns)
+    pile = applyPickupAffixes(room, liarP, pile);
+    // Push remaining pile to liar's hand
+    for (const c of pile) liarP.hand.push(c);
     room.pile = [];
     if (liarP.finishedThisRound) {
-      // They had finished but now have cards again — back to active
       liarP.finishedThisRound = false;
       const pos = room.placements.indexOf(liarIdx);
       if (pos !== -1) room.placements.splice(pos, 1);
     }
     room.currentTurnIdx = liarIdx;
+    // Taxman joker: any other player with Taxman gets +10g if pickup was 5+
+    if (pile.length + (playedCards.filter(c => c.rank === 'J' && playerHasJoker(liarP, 'scapegoat')).length) >= 5) {
+      for (const tp of room.players) {
+        if (tp === liarP) continue;
+        if (playerHasJoker(tp, 'taxman')) {
+          const got = applyGoldGain(tp, 10, 'taxman');
+          if (got > 0) log(room, `${tp.name} - Taxman: +${got}g.`);
+        }
+      }
+    }
   } else {
-    // Truth-teller — challenger takes the pile
     log(room, `${challengerP.name} called LIAR — wrong! ${challengerP.name} takes the pile.`);
-    for (const c of room.pile) challengerP.hand.push(c);
+    let pile = room.pile.slice();
+    pile = applyPickupAffixes(room, challengerP, pile);
+    for (const c of pile) challengerP.hand.push(c);
     room.pile = [];
     if (challengerP.finishedThisRound) {
       challengerP.finishedThisRound = false;
@@ -753,7 +936,20 @@ function handleLiar(room, playerId) {
       if (pos !== -1) room.placements.splice(pos, 1);
     }
     room.currentTurnIdx = idx;
+    // Taxman triggers on the wrong-call pickup too
+    if (pile.length >= 5) {
+      for (const tp of room.players) {
+        if (tp === challengerP) continue;
+        if (playerHasJoker(tp, 'taxman')) {
+          const got = applyGoldGain(tp, 10, 'taxman');
+          if (got > 0) log(room, `${tp.name} - Taxman: +${got}g.`);
+        }
+      }
+    }
   }
+
+  // Gilded trigger for whoever holds the new turn
+  triggerGildedTurn(room, room.currentTurnIdx);
 
   // After taking pile, check round end
   if (activeCount(room) <= 1) {
@@ -802,6 +998,7 @@ function endRoundIfDone(room) {
 function endRound(room, winnerIdx, message) {
   const winner = room.players[winnerIdx];
   log(room, `Round end: ${message}`);
+  applyIronStomach(room);
 
   // Placement gold: 1st = +20g, 2nd = +10g
   if (room.placements.length >= 1) {
@@ -1041,7 +1238,87 @@ function shopBuy(room, playerId, itemId) {
     log(room, `${p.name} bought ${item.name} (-${item.price}g).`);
     return { ok: true };
   }
-  return { error: 'Service items not yet wired in PvP.' };
+  if (item.type === 'service') {
+    // Two-step: payment is held until the player picks a target. Mark as pending.
+    if (!room.pendingServices) room.pendingServices = {};
+    if (room.pendingServices[playerId]) return { error: 'You already have a service to apply.' };
+    if ((p.gold || 0) < item.price) return { error: 'Not enough gold.' };
+    p.gold -= item.price;
+    room.pendingServices[playerId] = { itemId: item.id, price: item.price };
+    log(room, `${p.name} bought ${item.name} (-${item.price}g) — pick a target.`);
+    return { ok: true, pendingService: item.id };
+  }
+  return { error: 'Unknown item type.' };
+}
+
+// Apply a pending service. `target` shape depends on the service:
+//   glassShard / spikedWire / steelPlating / mirageLens: { cardId }
+//   stripper:                                              { cardId }
+//   engraver:                                              { rank }
+function applyService(room, playerId, target) {
+  const p = findPlayerById(room, playerId);
+  if (!p) return { error: 'Not in room.' };
+  const ps = (room.pendingServices || {})[playerId];
+  if (!ps) return { error: 'No pending service.' };
+  const itemId = ps.itemId;
+  target = target || {};
+
+  const finalize = (msg) => {
+    delete room.pendingServices[playerId];
+    log(room, `${p.name} - ${msg}`);
+    return { ok: true };
+  };
+  const refund = (msg) => {
+    p.gold = (p.gold || 0) + ps.price;
+    delete room.pendingServices[playerId];
+    return { error: (msg || 'Service cancelled — gold refunded.') };
+  };
+
+  // Apply-an-affix services
+  const affixMap = {
+    glassShard: 'glass',
+    spikedWire: 'spiked',
+    steelPlating: 'steel',
+    mirageLens: 'mirage',
+  };
+  if (affixMap[itemId]) {
+    const card = (p.runDeck || []).find(c => c.id === target.cardId);
+    if (!card) return { error: 'Card not found in your run deck.' };
+    if (card.affix) return { error: 'That card already has an affix.' };
+    card.affix = affixMap[itemId];
+    return finalize(`applied ${affixMap[itemId]} to ${card.rank}.`);
+  }
+
+  if (itemId === 'stripper') {
+    const card = (p.runDeck || []).find(c => c.id === target.cardId);
+    if (!card) return { error: 'Card not found in your run deck.' };
+    if (card.rank === 'J') return { error: 'Cannot strip a Jack.' };
+    p.runDeck = p.runDeck.filter(c => c.id !== card.id);
+    return finalize(`stripped a ${card.rank} from their run deck.`);
+  }
+
+  if (itemId === 'engraver') {
+    const r = (target.rank || '').toUpperCase();
+    if (!['A', 'K', 'Q', '10'].includes(r)) return { error: 'Pick a rank: A, K, Q, or 10.' };
+    if ((p.runDeck || []).length >= 24) return refund('Run deck is at the cap (24).');
+    const newId = 'p' + room.players.indexOf(p) + '_eng_' + r + '_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+    p.runDeck.push({ rank: r, id: newId, owner: room.players.indexOf(p), affix: null });
+    return finalize(`engraved a new vanilla ${r} into their run deck (size ${p.runDeck.length}).`);
+  }
+
+  return refund('Service not yet wired.');
+}
+
+// Cancel a pending service (refund).
+function cancelService(room, playerId) {
+  const p = findPlayerById(room, playerId);
+  if (!p) return { error: 'Not in room.' };
+  const ps = (room.pendingServices || {})[playerId];
+  if (!ps) return { error: 'No pending service.' };
+  p.gold = (p.gold || 0) + ps.price;
+  delete room.pendingServices[playerId];
+  log(room, `${p.name} cancelled a service (refunded ${ps.price}g).`);
+  return { ok: true };
 }
 
 function endRun(room, winnerId) {
@@ -1281,6 +1558,8 @@ module.exports = {
   // Fork phase
   pickFork,
   shopBuy,
+  applyService,
+  cancelService,
   maybeAdvanceFromFork,
   // Roguelike actions
   useTattletale,

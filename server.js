@@ -1179,6 +1179,26 @@ io.on('connection', async (socket) => {
     betaMP.broadcast(io, room);
   });
 
+  socket.on('beta:applyService', ({ target } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.applyService(room, player.id, target || {});
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:cancelService', () => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.cancelService(room, player.id);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
   socket.on('beta:useConsumable', ({ itemId, options } = {}) => {
     const room = betaMP.betaRooms[currentBetaRoomId];
     if (!room) return emitBetaError('Not in a beta room.');
