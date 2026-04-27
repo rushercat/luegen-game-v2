@@ -5,18 +5,21 @@
 // SUPABASE_SERVICE_KEY is missing, every operation no-ops and `enabled`
 // stays false — the game still runs anonymously.
 //
-// Passwords are never stored in plaintext; we use Node's built-in scrypt
-// with a per-user salt and a constant-time comparison on verify.
+// Email/password signups use Node's built-in scrypt with a per-user salt.
+// Google sign-in uses Supabase's hosted OAuth, then we map the resulting
+// Supabase user onto our own users table by (provider, sub).
 const crypto = require('crypto');
 let createClient = null;
 try { ({ createClient } = require('@supabase/supabase-js')); } catch (_) { /* package not installed */ }
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const SESSION_DAYS = 30;
 const MIN_PASSWORD_LEN = 6;
 
 const enabled = !!(createClient && SUPABASE_URL && SUPABASE_SERVICE_KEY);
+const oauthEnabled = !!(enabled && SUPABASE_ANON_KEY);
 const supabase = enabled
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSession: false } })
   : null;
@@ -24,6 +27,9 @@ const supabase = enabled
 if (!enabled) {
   // eslint-disable-next-line no-console
   console.warn('[auth] Supabase not configured — running without accounts/stats. Set SUPABASE_URL + SUPABASE_SERVICE_KEY in .env to enable.');
+} else if (!oauthEnabled) {
+  // eslint-disable-next-line no-console
+  console.warn('[auth] SUPABASE_ANON_KEY not set — Google sign-in disabled. Username/password still works.');
 }
 
 // ---- Helpers ----
@@ -34,6 +40,7 @@ function hashPassword(password, salt) {
 }
 
 function verifyPassword(password, hash, salt) {
+  if (!hash || !salt) return false;
   let computed;
   try { computed = crypto.scryptSync(password, salt, 64).toString('hex'); }
   catch (_) { return false; }
@@ -51,6 +58,10 @@ function isValidUsername(name) {
   return typeof name === 'string' && /^[a-zA-Z0-9_-]{3,20}$/.test(name.trim());
 }
 
+function sanitizeUsername(s) {
+  return String(s || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 20);
+}
+
 function publicUser(u) {
   if (!u) return null;
   return {
@@ -66,11 +77,13 @@ function publicUser(u) {
     liarsbar_played: u.liarsbar_played || 0,
     liarsbar_won: u.liarsbar_won || 0,
     liarsbar_lost: u.liarsbar_lost || 0,
-    liarsbar_eliminations: u.liarsbar_eliminations || 0
+    liarsbar_eliminations: u.liarsbar_eliminations || 0,
+    has_password: !!u.password_hash,
+    oauth_provider: u.oauth_provider || null
   };
 }
 
-// ---- Auth operations ----
+// ---- Email / password ----
 async function signup(username, password) {
   if (!enabled) throw new Error('Accounts are disabled on this server.');
   username = String(username || '').trim();
@@ -103,12 +116,14 @@ async function login(username, password) {
     .eq('username_lower', lower)
     .maybeSingle();
   if (!user) throw new Error('Wrong username or password.');
+  if (!user.password_hash) throw new Error('This account uses Google sign-in, not a password.');
   if (!verifyPassword(password, user.password_hash, user.password_salt)) {
     throw new Error('Wrong username or password.');
   }
   return user;
 }
 
+// ---- Sessions ----
 async function createSession(userId) {
   if (!enabled) return null;
   const token = makeToken();
@@ -144,10 +159,6 @@ async function getUserByToken(token) {
 }
 
 // ---- Stats ----
-//
-// `entries` is an array of { userId, won, lost, mode, eliminated }
-// `activeModifiers` is an array of modifier keys (strings) that were on
-// during the game; each is credited to every participating user.
 async function recordGameStats(entries, activeModifiers) {
   if (!enabled) return;
   const mods = Array.isArray(activeModifiers) ? activeModifiers : [];
@@ -206,8 +217,78 @@ async function userModifierStats(userId) {
   return data || [];
 }
 
+// ---- Google OAuth bridge ----
+//
+// The browser does the Google OAuth dance with Supabase's JS client. After
+// the redirect, the browser posts the resulting Supabase JWT to our backend.
+// We verify it by calling Supabase's /auth/v1/user (which only answers if
+// the token is valid), then look up or create a row in our users table
+// keyed on (oauth_provider, oauth_sub).
+async function verifySupabaseUser(jwt) {
+  if (!oauthEnabled || !jwt) return null;
+  try {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        'Authorization': `Bearer ${jwt}`,
+        'apikey': SUPABASE_ANON_KEY
+      }
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+async function findOrCreateOAuthUser({ provider, sub, email, username }) {
+  if (!enabled) throw new Error('Accounts are disabled on this server.');
+  if (!provider || !sub) throw new Error('OAuth payload is incomplete.');
+
+  // 1) Existing link by (provider, sub).
+  const { data: byOauth } = await supabase
+    .from('users')
+    .select('*')
+    .eq('oauth_provider', provider)
+    .eq('oauth_sub', sub)
+    .maybeSingle();
+  if (byOauth) return { user: byOauth, isNew: false };
+
+  // 2) New user — must have a username.
+  const trimmed = (username || '').trim();
+  if (!trimmed) {
+    const suggested = email ? sanitizeUsername(email.split('@')[0]) : '';
+    return { needsUsername: true, suggested };
+  }
+  if (!isValidUsername(trimmed)) throw new Error('Username must be 3–20 chars: letters, digits, _ or -.');
+
+  const lower = trimmed.toLowerCase();
+  const { data: dup } = await supabase
+    .from('users')
+    .select('id')
+    .eq('username_lower', lower)
+    .maybeSingle();
+  if (dup) throw new Error('Username already taken.');
+
+  const { data: user, error } = await supabase
+    .from('users')
+    .insert({
+      username: trimmed,
+      username_lower: lower,
+      email: email || null,
+      oauth_provider: provider,
+      oauth_sub: sub
+    })
+    .select()
+    .single();
+  if (error) throw new Error('Could not create account: ' + error.message);
+  return { user, isNew: true };
+}
+
 module.exports = {
   enabled,
+  oauthEnabled,
+  supabaseUrl: SUPABASE_URL || '',
+  supabaseAnonKey: SUPABASE_ANON_KEY || '',
   signup,
   login,
   createSession,
@@ -218,5 +299,7 @@ module.exports = {
   leaderboard,
   userModifierStats,
   isValidUsername,
+  verifySupabaseUser,
+  findOrCreateOAuthUser,
   MIN_PASSWORD_LEN
 };

@@ -86,6 +86,23 @@ begin
 end;
 $$ language plpgsql;
 
+-- ===== OAuth columns (Google sign-in) =====
+-- Re-runnable migration: existing users created before OAuth still work
+-- (their oauth_* fields stay null, password fields populated).
+alter table users add column if not exists email text;
+alter table users add column if not exists oauth_provider text;
+alter table users add column if not exists oauth_sub text;
+
+-- Allow OAuth-only users (no password). Existing email/password users keep
+-- their hash/salt; only the NOT NULL constraint is relaxed.
+alter table users alter column password_hash drop not null;
+alter table users alter column password_salt drop not null;
+
+-- Unique link per (provider, sub) so Google's stable user id maps to one row.
+create unique index if not exists idx_users_oauth
+  on users(oauth_provider, oauth_sub)
+  where oauth_provider is not null and oauth_sub is not null;
+
 -- ===== Useful view for the leaderboard =====
 create or replace view leaderboard as
   select id, username, games_played, games_won, games_lost,

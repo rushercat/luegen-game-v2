@@ -2,10 +2,11 @@
 const AUTH_TOKEN_KEY = 'lugen-auth-token';
 let authToken = null;
 let authUser = null;
-let authConfig = { authEnabled: false, minPasswordLen: 6 };
+let authConfig = { authEnabled: false, googleEnabled: false, minPasswordLen: 6, supabaseUrl: '', supabaseAnonKey: '' };
 
-// Read the auth token from localStorage early so we can pass it to socket.io
-// during the initial handshake.
+let supaClient = null;          // Supabase JS client (only when Google sign-in enabled)
+let pendingSupabaseToken = null;// during username-pick step after Google redirect
+
 try { authToken = localStorage.getItem(AUTH_TOKEN_KEY) || null; } catch (_) {}
 
 const socket = io({
@@ -82,7 +83,12 @@ async function fetchJson(url, opts) {
   const r = await fetch(url, o);
   let data = null;
   try { data = await r.json(); } catch (_) {}
-  if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
+  if (!r.ok) {
+    const err = new Error((data && data.error) || `HTTP ${r.status}`);
+    err.status = r.status;
+    err.data = data;
+    throw err;
+  }
   return data;
 }
 
@@ -101,7 +107,6 @@ async function loadCurrentUser() {
     authUser._modifierStats = r.modifierStats || [];
     renderAuthBar(authUser);
   } catch (_) {
-    // Token expired/invalid — clear it.
     saveToken(null);
     authUser = null;
     renderAuthBar(null);
@@ -128,7 +133,6 @@ function renderAuthBar(user) {
     inn.classList.remove('flex');
     out.classList.remove('hidden');
   }
-  // Lobby name input becomes a read-only "signed in as X" hint.
   const nameInput = $('playerName');
   const hint = $('signedInAs');
   if (user) {
@@ -150,21 +154,44 @@ function renderAuthBar(user) {
   }
 }
 
-function openAuthModal(mode) {
+function setAuthModalMode(mode, opts = {}) {
   const m = $('authModal');
-  $('authModalTitle').textContent = mode === 'signup' ? 'Sign Up' : 'Sign In';
-  $('authSubmitBtn').textContent  = mode === 'signup' ? 'Create account' : 'Sign in';
-  $('authHint').textContent = mode === 'signup'
-    ? `Username: 3–20 chars (letters, digits, _ or -). Password: at least ${authConfig.minPasswordLen} chars.`
-    : '';
-  $('authError').textContent = '';
-  $('authUsernameInput').value = '';
-  $('authPasswordInput').value = '';
   m.dataset.mode = mode;
-  m.classList.remove('hidden');
+  $('authError').textContent = '';
+  $('authUsernameInput').value = opts.username || '';
+  $('authPasswordInput').value = '';
+  const showGoogle = !!authConfig.googleEnabled && (mode === 'signin' || mode === 'signup');
+  $('googleSignInBtn').classList.toggle('hidden', !showGoogle);
+  $('authDivider').classList.toggle('hidden', !showGoogle);
+  if (showGoogle) $('authDivider').classList.add('flex');
+
+  if (mode === 'oauth-username') {
+    $('authModalTitle').textContent = 'Choose a username';
+    $('authSubmitBtn').textContent = 'Create account';
+    $('authHint').textContent = 'Pick a username for your new Google-linked account. 3–20 chars (letters, digits, _ or -).';
+    $('authPasswordInput').classList.add('hidden');
+  } else if (mode === 'signup') {
+    $('authModalTitle').textContent = 'Sign Up';
+    $('authSubmitBtn').textContent = 'Create account';
+    $('authHint').textContent = `Username: 3–20 chars (letters, digits, _ or -). Password: at least ${authConfig.minPasswordLen} chars.`;
+    $('authPasswordInput').classList.remove('hidden');
+  } else {
+    $('authModalTitle').textContent = 'Sign In';
+    $('authSubmitBtn').textContent = 'Sign in';
+    $('authHint').textContent = '';
+    $('authPasswordInput').classList.remove('hidden');
+  }
+}
+
+function openAuthModal(mode) {
+  setAuthModalMode(mode);
+  $('authModal').classList.remove('hidden');
   setTimeout(() => $('authUsernameInput').focus(), 50);
 }
-function closeAuthModal() { $('authModal').classList.add('hidden'); }
+function closeAuthModal() {
+  $('authModal').classList.add('hidden');
+  pendingSupabaseToken = null;
+}
 
 async function submitAuth() {
   const m = $('authModal');
@@ -173,6 +200,21 @@ async function submitAuth() {
   const password = $('authPasswordInput').value;
   const errEl = $('authError');
   errEl.textContent = '';
+
+  if (mode === 'oauth-username') {
+    if (!username) { errEl.textContent = 'Pick a username.'; return; }
+    if (!pendingSupabaseToken) { errEl.textContent = 'Sign-in expired — try again.'; return; }
+    $('authSubmitBtn').disabled = true;
+    try {
+      await tryOAuthLink(pendingSupabaseToken, username);
+    } catch (e) {
+      errEl.textContent = e.message || 'Failed.';
+    } finally {
+      $('authSubmitBtn').disabled = false;
+    }
+    return;
+  }
+
   if (!username || !password) {
     errEl.textContent = 'Username and password are required.';
     return;
@@ -185,7 +227,6 @@ async function submitAuth() {
     authUser = r.user;
     closeAuthModal();
     renderAuthBar(authUser);
-    // Reconnect the socket so the server picks up the new token.
     socket.auth = { token: authToken };
     socket.disconnect();
     socket.connect();
@@ -198,13 +239,81 @@ async function submitAuth() {
 
 async function doSignOut() {
   try { await fetchJson('/api/logout', { method: 'POST' }); } catch (_) {}
+  if (supaClient) { try { await supaClient.auth.signOut(); } catch (_) {} }
   saveToken(null);
   authUser = null;
   renderAuthBar(null);
-  // Reconnect the socket without a token.
   socket.auth = { token: '' };
   socket.disconnect();
   socket.connect();
+}
+
+// ---------- Google OAuth ----------
+async function initSupabaseClient() {
+  if (!authConfig.googleEnabled || !authConfig.supabaseUrl || !authConfig.supabaseAnonKey) return;
+  if (typeof window.supabase === 'undefined' || !window.supabase.createClient) return;
+  supaClient = window.supabase.createClient(authConfig.supabaseUrl, authConfig.supabaseAnonKey, {
+    auth: { detectSessionInUrl: true, persistSession: true, autoRefreshToken: true, flowType: 'implicit' }
+  });
+  // If we just landed back from a Google redirect (URL has #access_token=…),
+  // the SDK will surface a session; bridge it to our backend session.
+  if (!authToken) {
+    try {
+      const { data } = await supaClient.auth.getSession();
+      const sess = data && data.session;
+      if (sess && sess.access_token) await tryOAuthLink(sess.access_token);
+    } catch (_) {}
+  }
+}
+
+async function googleSignIn() {
+  if (!supaClient) {
+    const el = $('authError'); if (el) el.textContent = 'Google sign-in is not configured.';
+    return;
+  }
+  try {
+    const redirectTo = window.location.origin + window.location.pathname;
+    await supaClient.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } });
+    // Browser navigates away to Google, we don't need to handle anything else here.
+  } catch (e) {
+    const el = $('authError'); if (el) el.textContent = (e && e.message) || 'Could not start Google sign-in.';
+  }
+}
+
+async function tryOAuthLink(supabaseAccessToken, providedUsername) {
+  try {
+    const r = await fetch('/api/oauth-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ supabase_token: supabaseAccessToken, username: providedUsername })
+    });
+    let data = null;
+    try { data = await r.json(); } catch (_) {}
+    if (r.status === 409 && data && data.needsUsername) {
+      pendingSupabaseToken = supabaseAccessToken;
+      setAuthModalMode('oauth-username', { username: data.suggested || '' });
+      $('authModal').classList.remove('hidden');
+      setTimeout(() => $('authUsernameInput').focus(), 50);
+      return;
+    }
+    if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
+    saveToken(data.token);
+    authUser = data.user;
+    pendingSupabaseToken = null;
+    closeAuthModal();
+    renderAuthBar(authUser);
+    // Sign out of the Supabase-side session so we don't loop on the next reload.
+    if (supaClient) { try { await supaClient.auth.signOut(); } catch (_) {} }
+    // Strip the OAuth fragment from the URL so a refresh stays clean.
+    if (window.location.hash && window.location.hash.includes('access_token')) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+    socket.auth = { token: authToken };
+    socket.disconnect();
+    socket.connect();
+  } catch (e) {
+    const el = $('authError'); if (el) el.textContent = (e && e.message) || 'Sign-in failed.';
+  }
 }
 
 function fmtPct(num, denom) {
@@ -270,7 +379,6 @@ function renderStatsModal(user) {
 
 async function openStats() {
   if (!authUser) return;
-  // Refresh first to pull latest numbers from server.
   try {
     const r = await fetchJson('/api/me');
     authUser = r.user;
@@ -318,10 +426,17 @@ $('statsBtn').onclick = openStats;
 $('leaderboardBtn').onclick = openLeaderboard;
 $('authCancelBtn').onclick = closeAuthModal;
 $('authSubmitBtn').onclick = submitAuth;
+$('googleSignInBtn').onclick = googleSignIn;
 $('statsCloseBtn').onclick = () => $('statsModal').classList.add('hidden');
 $('leaderboardCloseBtn').onclick = () => $('leaderboardModal').classList.add('hidden');
 $('authPasswordInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
-$('authUsernameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('authPasswordInput').focus(); });
+$('authUsernameInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const m = $('authModal').dataset.mode;
+    if (m === 'oauth-username') submitAuth();
+    else $('authPasswordInput').focus();
+  }
+});
 
 // ---------- Sound effects ----------
 function playSound(src, volume) {
@@ -464,7 +579,6 @@ socket.on('roomState', (state) => {
   }
   if (state.gameOver) {
     showGameOver(state);
-    // Refresh stats so the user sees the new numbers when they open the modal.
     if (authUser) loadCurrentUser();
   } else $('gameOver').classList.add('hidden');
   $('endGameBtn').classList.toggle('hidden', !(state.started && state.hostId === myId && !state.gameOver));
@@ -999,9 +1113,10 @@ function escapeHtml(str) {
   ));
 }
 
-// Boot: load auth config + current user info.
+// Boot: load auth config, then init Supabase (if Google enabled), then current user.
 (async () => {
   await loadAuthConfig();
+  await initSupabaseClient();
   if (authConfig.authEnabled) {
     await loadCurrentUser();
   } else {

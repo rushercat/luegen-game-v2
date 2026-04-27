@@ -33,7 +33,15 @@ function bearerToken(req) {
 }
 
 app.get('/api/config', (_req, res) => {
-  res.json({ authEnabled: auth.enabled, minPasswordLen: auth.MIN_PASSWORD_LEN });
+  res.json({
+    authEnabled: auth.enabled,
+    googleEnabled: auth.oauthEnabled,
+    minPasswordLen: auth.MIN_PASSWORD_LEN,
+    // Anon key + URL are safe to expose — that's how Supabase's browser SDK
+    // works. The service key never leaves the server.
+    supabaseUrl: auth.oauthEnabled ? auth.supabaseUrl : '',
+    supabaseAnonKey: auth.oauthEnabled ? auth.supabaseAnonKey : ''
+  });
 });
 
 app.post('/api/signup', async (req, res) => {
@@ -73,6 +81,33 @@ app.get('/api/me', async (req, res) => {
 app.get('/api/leaderboard', async (_req, res) => {
   const list = await auth.leaderboard(20);
   res.json({ users: list });
+});
+
+// Bridge a Supabase OAuth JWT into one of our session tokens. The browser
+// posts here once after Google's redirect lands. May reply 409 the very
+// first time so the client can prompt for a username.
+app.post('/api/oauth-link', async (req, res) => {
+  try {
+    const { supabase_token, username } = req.body || {};
+    if (!supabase_token) return res.status(400).json({ error: 'Missing token.' });
+    const supaUser = await auth.verifySupabaseUser(supabase_token);
+    if (!supaUser) return res.status(401).json({ error: 'Invalid Supabase token.' });
+    const provider = (supaUser.app_metadata && supaUser.app_metadata.provider) || 'oauth';
+    const sub = supaUser.id;
+    const email = supaUser.email || null;
+    const result = await auth.findOrCreateOAuthUser({ provider, sub, email, username });
+    if (result.needsUsername) {
+      return res.status(409).json({
+        error: 'Username required.',
+        needsUsername: true,
+        suggested: result.suggested || ''
+      });
+    }
+    const token = await auth.createSession(result.user.id);
+    res.json({ token, user: auth.publicUser(result.user), isNew: !!result.isNew });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'OAuth link failed.' });
+  }
 });
 
 // ---------- Game constants ----------
@@ -199,7 +234,6 @@ function describeActiveSettings(s) {
   return out;
 }
 
-// Stable keys recorded against modifier_stats — independent of the human label.
 function activeModifierKeys(s) {
   const out = [];
   if (s.liarsBar)              out.push('liarsBar');
@@ -275,7 +309,6 @@ function publicState(room) {
 
 function recordCompletedGameStats(room) {
   if (!auth.enabled || !room.gameOver || room.statsRecorded) return;
-  // Don't credit stats when the host force-ends a game (started=false & no winners).
   if (!room.winners || room.winners.length === 0) return;
   room.statsRecorded = true;
   const mode = room.settings.liarsBar ? 'liarsbar' : 'classic';
@@ -294,7 +327,6 @@ function recordCompletedGameStats(room) {
   }
   if (entries.length === 0) return;
   const mods = activeModifierKeys(room.settings);
-  // Fire and forget — don't block the broadcast.
   auth.recordGameStats(entries, mods).catch(err => {
     console.error('[stats] record failed', err && err.message);
   });
@@ -438,7 +470,6 @@ function applyShuffleSeatsPreservingStarter(room, starterId) {
 // ---------- Socket handlers ----------
 io.on('connection', async (socket) => {
   let currentRoomId = null;
-  // Resolve the user (if any) from the auth token sent in the handshake.
   let socketUser = null;
   const authToken = socket.handshake && socket.handshake.auth && socket.handshake.auth.token;
   if (authToken) {
@@ -479,8 +510,6 @@ io.on('connection', async (socket) => {
     const wasOffline = !player.connected;
     player.socketId = socket.id;
     player.connected = true;
-    // Refresh the userId/username on resume so a re-login between sessions
-    // attaches stats to the current account.
     if (socketUser) {
       player.userId = socketUser.id;
       player.username = socketUser.username;
@@ -493,8 +522,6 @@ io.on('connection', async (socket) => {
   });
 
   function addPlayer(room, sock, name) {
-    // If this socket is signed in, force the username (tied to the account).
-    // Anonymous sockets fall back to whatever the user typed.
     const displayName = socketUser
       ? socketUser.username
       : ((name || '').trim().slice(0, 20) || `Player${room.players.length + 1}`);
@@ -559,8 +586,7 @@ io.on('connection', async (socket) => {
     room.started = true;
     room.gameOver = false;
     room.statsRecorded = false;
-    room.winners = [];
-    room.losers = [];
+    room.winners = []; room.losers = [];
     room.currentTurnIdx = 0;
     room.targetRank = null;
     clearPile(room);
@@ -936,5 +962,5 @@ io.on('connection', async (socket) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Lugen server listening on port ${PORT}.${auth.enabled ? ' (Supabase auth enabled)' : ''}`);
+  console.log(`Lugen server listening on port ${PORT}.${auth.enabled ? ' (Supabase auth' + (auth.oauthEnabled ? ' + Google OAuth' : '') + ' enabled)' : ''}`);
 });
