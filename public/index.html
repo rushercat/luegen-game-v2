@@ -311,6 +311,7 @@
       <li>First player to empty their hand wins the round</li>
     </ul>
     <button id="betaStartBtn" class="bg-yellow-500 hover:bg-yellow-400 text-black px-8 py-3 rounded-lg font-bold transition">Start a round</button>
+    <button id="betaMpOpenBtn" class="ml-3 bg-purple-600 hover:bg-purple-500 text-white px-8 py-3 rounded-lg font-bold transition">&#128101; Multiplayer (PvP)</button>
 
     <div class="mt-6">
       <h4 class="text-sm font-bold text-emerald-200 mb-2">Recent runs</h4>
@@ -613,6 +614,73 @@
     </div>
   </div>
 </div>
+
+  <!-- ============ BETA MULTIPLAYER (PvP) ============ -->
+  <div id="betaMpEntry" class="hidden bg-black/40 backdrop-blur p-6 rounded-2xl shadow-xl">
+    <h3 class="text-xl font-bold mb-2">Beta Multiplayer (PvP)</h3>
+    <p class="text-xs text-emerald-200 mb-4">2&ndash;4 humans share a 9-floor run. Each player has their own personal deck, hearts, and gold. MVP: jokers / consumables / shop / forks are not yet wired in PvP &mdash; coming next.</p>
+    <div id="betaMpError" class="hidden bg-rose-700/40 border border-rose-400 text-rose-100 px-3 py-2 rounded mb-3 text-sm"></div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+      <div class="bg-black/30 p-4 rounded-lg">
+        <h4 class="font-bold mb-2">Create room</h4>
+        <input id="betaMpName" type="text" placeholder="Display name (optional)" class="w-full mb-2 px-3 py-2 rounded bg-black/40 border border-white/10 text-sm" />
+        <button id="betaMpCreateBtn" class="w-full bg-yellow-500 hover:bg-yellow-400 text-black px-4 py-2 rounded font-bold transition">Create</button>
+      </div>
+      <div class="bg-black/30 p-4 rounded-lg">
+        <h4 class="font-bold mb-2">Join room</h4>
+        <input id="betaMpJoinCode" type="text" placeholder="Room code" class="w-full mb-2 px-3 py-2 rounded bg-black/40 border border-white/10 text-sm uppercase" />
+        <button id="betaMpJoinBtn" class="w-full bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded font-bold transition">Join</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="betaMpLobby" class="hidden bg-black/40 backdrop-blur p-6 rounded-2xl shadow-xl">
+    <div class="flex justify-between items-center mb-4">
+      <h3 class="text-xl font-bold">Lobby</h3>
+      <div class="text-sm">Room code: <span id="betaMpRoomCode" class="font-mono text-2xl bg-black/40 px-3 py-1 rounded ml-2">-----</span></div>
+    </div>
+    <div class="mb-4">
+      <h4 class="font-bold text-emerald-200 mb-2">Players</h4>
+      <div id="betaMpPlayerList" class="space-y-1"></div>
+    </div>
+    <div class="mb-4">
+      <h4 class="font-bold text-emerald-200 mb-2">Pick your character</h4>
+      <div id="betaMpMyCharacter" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2"></div>
+    </div>
+    <div class="flex items-center gap-3">
+      <button id="betaMpStartBtn" class="hidden bg-yellow-500 hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed text-black px-6 py-2 rounded font-bold transition">Start run</button>
+      <span id="betaMpStartHint" class="text-sm text-emerald-200"></span>
+      <button id="betaMpLeaveBtn" class="ml-auto bg-rose-600 hover:bg-rose-500 px-4 py-2 rounded text-sm transition">Leave room</button>
+    </div>
+  </div>
+
+  <div id="betaMpGame" class="hidden">
+    <div class="flex flex-wrap justify-between items-center gap-3 bg-black/40 px-4 py-2 rounded-lg mb-4 text-sm">
+      <div>Floor <span id="betaMpFloor" class="font-bold text-yellow-300">1/9</span></div>
+      <div id="betaMpStatus" class="text-emerald-200"></div>
+      <button id="betaMpLeaveBtn2" class="bg-rose-600 hover:bg-rose-500 px-3 py-1 rounded text-xs transition" onclick="document.getElementById('betaMpLeaveBtn').click()">Leave</button>
+    </div>
+    <div id="betaMpPlayers" class="flex flex-wrap gap-3 justify-center mb-4"></div>
+    <div class="bg-black/30 rounded-2xl p-6 text-center border border-white/10 mb-4">
+      <div class="text-xs uppercase tracking-widest text-yellow-300">Target rank</div>
+      <div id="betaMpTarget" class="text-7xl font-extrabold my-2">&mdash;</div>
+      <div class="text-sm text-emerald-200">Pile: <span id="betaMpPileSize" class="font-bold">0</span> &middot; Draw: <span id="betaMpDrawSize" class="font-bold">0</span></div>
+      <div id="betaMpLastPlay" class="mt-2 text-yellow-200 text-sm min-h-[1.25rem]"></div>
+    </div>
+    <div id="betaMpHand" class="flex flex-wrap gap-2 justify-center mb-4"></div>
+    <div class="flex flex-wrap gap-2 justify-center mb-4">
+      <button id="betaMpPlayBtn" class="bg-yellow-500 hover:bg-yellow-400 text-black px-6 py-2 rounded font-bold transition disabled:opacity-40 disabled:cursor-not-allowed">Play</button>
+      <button id="betaMpPassBtn" class="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded font-bold transition disabled:opacity-40 disabled:cursor-not-allowed">Pass</button>
+      <button id="betaMpLiarBtn" class="bg-rose-600 hover:bg-rose-500 px-6 py-2 rounded font-bold transition disabled:opacity-40 disabled:cursor-not-allowed">LIAR!</button>
+    </div>
+    <div id="betaMpLog" class="bg-black/30 rounded-lg p-3 text-xs max-h-40 overflow-y-auto"></div>
+  </div>
+
+  <div id="betaMpResult" class="hidden bg-black/40 backdrop-blur p-6 rounded-2xl shadow-xl text-center">
+    <h3 id="betaMpResultTitle" class="text-3xl font-extrabold mb-3"></h3>
+    <div id="betaMpResultText" class="text-sm text-emerald-200 mb-4"></div>
+    <button id="betaMpResultBackBtn" class="bg-yellow-500 hover:bg-yellow-400 text-black px-6 py-2 rounded font-bold transition">Back to beta menu</button>
+  </div>
 
 <!-- ============ WAITING ROOM ============ -->
 <div id="waitingRoom" class="hidden max-w-2xl mx-auto pt-12 px-4 pb-10">
@@ -1014,5 +1082,6 @@
 </script>
 <script src="/client.js"></script>
 <script src="/beta.js"></script>
+<script src="/beta-mp.js"></script>
 </body>
 </html>

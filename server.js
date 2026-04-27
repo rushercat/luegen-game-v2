@@ -6,6 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { Server } = require('socket.io');
 const auth = require('./auth');
+const betaMP = require('./server-beta-rooms');
 
 const app = express();
 const server = http.createServer(app);
@@ -1049,7 +1050,128 @@ io.on('connection', async (socket) => {
     broadcast(room);
   });
 
+  // ===== Beta multiplayer handlers =====
+  let currentBetaRoomId = null;
+
+  function emitBetaError(message) { socket.emit('beta:error', { message }); }
+
+  socket.on('beta:createRoom', ({ name } = {}) => {
+    let id;
+    do { id = betaMP.makeRoomId(); } while (betaMP.betaRooms[id]);
+    const room = betaMP.newBetaRoom(id);
+    room._io = io;
+    betaMP.betaRooms[id] = room;
+    const r = betaMP.addPlayer(room, socket, name, socketUser);
+    if (r.error) return emitBetaError(r.error);
+    currentBetaRoomId = id;
+    socket.emit('beta:joined', { roomId: id, playerId: r.player.id });
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:joinRoom', ({ roomId, name } = {}) => {
+    const id = (roomId || '').toUpperCase();
+    const room = betaMP.betaRooms[id];
+    if (!room) return emitBetaError('Beta room not found.');
+    const r = betaMP.addPlayer(room, socket, name, socketUser);
+    if (r.error) return emitBetaError(r.error);
+    currentBetaRoomId = id;
+    socket.emit('beta:joined', { roomId: id, playerId: r.player.id });
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:pickCharacter', ({ characterId } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.pickCharacter(room, player.id, characterId);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:startRun', () => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    if (room.hostId !== player.id) return emitBetaError('Only the host can start the run.');
+    if (room.runStarted) return emitBetaError('Run already started.');
+    if (room.players.length < betaMP.MIN_PLAYERS) {
+      return emitBetaError('Need at least ' + betaMP.MIN_PLAYERS + ' players.');
+    }
+    if (room.players.some(p => !p.character)) {
+      return emitBetaError('All players must pick a character.');
+    }
+    betaMP.startRun(room);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:play', ({ cardIds } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.handlePlay(room, player.id, cardIds);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:pass', () => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.handlePass(room, player.id);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:liar', () => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.handleLiar(room, player.id);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:leave', () => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return;
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return;
+    socket.leave(room.id);
+    betaMP.removePlayer(room, player.id);
+    currentBetaRoomId = null;
+    if (betaMP.betaRooms[room.id]) betaMP.broadcast(io, room);
+  });
+
   socket.on('disconnect', () => {
+    // Beta MP disconnect cleanup
+    if (currentBetaRoomId) {
+      const bRoom = betaMP.betaRooms[currentBetaRoomId];
+      if (bRoom) {
+        const bp = betaMP.findPlayerBySocket(bRoom, socket.id);
+        if (bp) {
+          bp.connected = false;
+          bp.socketId = null;
+          // Grace period: 60s, then remove
+          if (bp.removalTimer) clearTimeout(bp.removalTimer);
+          const roomIdSnapshot = bRoom.id;
+          const playerIdSnapshot = bp.id;
+          bp.removalTimer = setTimeout(() => {
+            const r2 = betaMP.betaRooms[roomIdSnapshot];
+            if (!r2) return;
+            const p2 = r2.players.find(x => x.id === playerIdSnapshot);
+            if (!p2 || p2.connected) return;
+            betaMP.removePlayer(r2, playerIdSnapshot);
+            if (betaMP.betaRooms[roomIdSnapshot]) betaMP.broadcast(io, r2);
+          }, 60 * 1000);
+          betaMP.broadcast(io, bRoom);
+        }
+      }
+    }
     const room = rooms[currentRoomId];
     if (!room) return;
     const player = findPlayerBySocket(room, socket.id);
