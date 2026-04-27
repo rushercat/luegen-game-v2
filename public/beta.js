@@ -2629,6 +2629,7 @@
   const SHOP_RARITY_WEIGHTS = { Common: 60, Uncommon: 25, Rare: 10, Legendary: 5 };
   const SHOP_OFFER_CONSUMABLES = 3;
   const SHOP_OFFER_JOKERS = 3;
+  const SHOP_OFFER_RELICS = 2;
 
   function regenerateShopOffer() {
     if (!runState) return;
@@ -2660,10 +2661,13 @@
       remaining.splice(pickedIdx, 1);
     }
 
-    // Relics — show all unowned (keep them visible since they're already rare)
-    const relicsPool = SHOP_ITEMS.filter(i => i.type === 'relic');
+    // Relics — pick a random subset, EQUAL weight (no rarity bias).
+    // Already-owned relics are excluded so the player doesn't see dead options.
+    const ownedRelicIds = (runState.relics || []);
+    const relicsPool = SHOP_ITEMS.filter(i => i.type === 'relic' && !ownedRelicIds.includes(i.id));
+    const pickedRelics = shuffle(relicsPool).slice(0, SHOP_OFFER_RELICS);
 
-    runState.shopOffer = [].concat(pickedConsumables, pickedJokers, relicsPool);
+    runState.shopOffer = [].concat(pickedConsumables, pickedJokers, pickedRelics);
   }
 
   function chooseShop() {
@@ -2793,15 +2797,116 @@
     startRound();
   }
 
+  function _buildShopRow(item) {
+      const isJoker = item.type === 'joker';
+      const isRelic = item.type === 'relic';
+      const equipped = isJoker && hasJoker(item.id);
+      const ownedRelic = isRelic && hasRelic(item.id);
+      const slotsFull = isJoker && runState.jokers.every(j => j !== null);
+      const owned = isJoker ? (equipped ? 1 : 0) :
+                    isRelic ? (ownedRelic ? 1 : 0) :
+                    (runState.inventory[item.id] || 0);
+      const canAfford = runState.gold >= item.price;
+      const disabled = !item.enabled || !canAfford ||
+                       (isJoker && (equipped || slotsFull)) ||
+                       (isRelic && ownedRelic);
+      const row = document.createElement('div');
+      row.className = 'relative bg-black/40 hover:bg-black/50 transition p-3 rounded-xl border border-white/10' +
+                       (item.enabled ? '' : ' opacity-60');
+      let btnLabel = item.enabled ? 'Buy' : 'Soon';
+      if (isJoker && equipped) btnLabel = 'Equipped';
+      else if (isJoker && slotsFull && !equipped) btnLabel = 'Slots full';
+      else if (isRelic && ownedRelic) btnLabel = 'Owned';
+      const priceColor = canAfford ? 'bg-yellow-400 text-black' : 'bg-rose-500 text-white';
+      row.innerHTML =
+        '<div class="absolute -top-2 left-3 px-2 py-0.5 rounded-full text-xs font-bold ' + priceColor + '">' + item.price + 'g</div>' +
+        '<div class="font-bold mt-1">' + escapeHtml(item.name) + '</div>' +
+        '<div class="text-xs text-emerald-200 mt-1 mb-2">' + escapeHtml(item.desc) + '</div>' +
+        '<div class="flex items-center justify-between">' +
+          '<div class="text-xs text-emerald-300">Owned: ' + owned + '</div>' +
+          '<button class="bg-yellow-500 hover:bg-yellow-400 text-black transition px-3 py-1 rounded font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"' +
+            (disabled ? ' disabled' : '') + '>' + btnLabel + '</button>' +
+        '</div>';
+      const buyBtn = row.querySelector('button');
+      if (!disabled) {
+        buyBtn.addEventListener('click', () => {
+          if (runState.gold < item.price) return;
+          if (item.type === 'service') {
+            if (item.id === 'glassShard') startGlassShardApply(item);
+            else if (item.id === 'forger') startForgerApply(item);
+            else if (item.id === 'tracer') startTracerApply(item);
+            else if (item.id === 'devilsBargain') startDevilsBargainApply(item);
+            else if (item.id === 'magnet') startMagnetApply(item);
+            else if (item.id === 'spikedWire') startAffixApply(item, 'spiked');
+            else if (item.id === 'steelPlating') startAffixApply(item, 'steel');
+            else if (item.id === 'mirageLens') startAffixApply(item, 'mirage');
+            else if (item.id === 'stripper') startStripperApply(item);
+            else if (item.id === 'engraver') startEngraverApply(item);
+          } else if (item.type === 'relic') {
+            if (hasRelic(item.id)) return;
+            runState.gold -= item.price;
+            runState.relics = runState.relics || [];
+            runState.relics.push(item.id);
+            log('Acquired relic: ' + item.name + '. (-' + item.price + 'g)');
+            renderShop();
+          } else if (item.type === 'joker') {
+            if (hasJoker(item.id)) return;
+            if (runState.jokers.every(j => j !== null)) {
+              log('Both joker slots full. Cannot equip ' + item.name + '.');
+              return;
+            }
+            const data = JOKER_CATALOG[item.id];
+            if (!data) return;
+            runState.gold -= item.price;
+            equipJoker(data);
+            if (item.id === 'tattletale') {
+              runState.tattletaleChargesThisFloor = TATTLETALE_CHARGES_PER_FLOOR;
+            }
+            log('Equipped joker: ' + data.name + '. (-' + item.price + 'g)');
+            renderShop();
+          } else {
+            runState.gold -= item.price;
+            runState.inventory[item.id] = owned + 1;
+            log('Bought ' + item.name + ' for ' + item.price + 'g (now ' + runState.gold + 'g).');
+            renderShop();
+          }
+        });
+      }
+      return row;
+  }
+
   function renderShop() {
     document.getElementById('betaShopGold').textContent = runState.gold;
     document.getElementById('betaShopNextFloor').textContent = runState.currentFloor;
-    const list = document.getElementById('betaShopItems');
-    list.innerHTML = '';
     const offer = (runState && runState.shopOffer && runState.shopOffer.length > 0)
       ? runState.shopOffer
       : SHOP_ITEMS;
-    for (const item of offer) {
+    const jokers = offer.filter(i => i.type === 'joker');
+    const relics = offer.filter(i => i.type === 'relic');
+    const consumables = offer.filter(i => i.type !== 'joker' && i.type !== 'relic');
+
+    const sections = [
+      ['betaShopJokers', jokers, 'No jokers in stock.'],
+      ['betaShopRelics', relics, 'No relics in stock.'],
+      ['betaShopConsumables', consumables, 'No consumables in stock.'],
+    ];
+    for (const [id, items, emptyMsg] of sections) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.innerHTML = '';
+      if (items.length === 0) {
+        el.innerHTML = '<p class="text-xs text-white/40 italic">' + emptyMsg + '</p>';
+        continue;
+      }
+      for (const item of items) {
+        el.appendChild(_buildShopRow(item));
+      }
+    }
+  }
+
+  // (legacy guard — old loop body removed; original anchor below was for ref only)
+  function _legacyRenderShopGuard() {
+    if (false) {
       const isJoker = item.type === 'joker';
       const isRelic = item.type === 'relic';
       const equipped = isJoker && hasJoker(item.id);
@@ -2878,7 +2983,7 @@
           }
         });
       }
-      list.appendChild(row);
+      // legacy
     }
   }
 

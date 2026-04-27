@@ -434,12 +434,29 @@
   </div>
 
   <!-- ============ SHOP ============ -->
-  <div id="betaShop" class="hidden max-w-2xl mx-auto pt-2 pb-10">
+  <div id="betaShop" class="hidden max-w-4xl mx-auto pt-2 pb-10">
     <div class="flex justify-between items-center mb-4">
       <h2 class="text-3xl font-bold">&#129689; Shop</h2>
       <span class="text-yellow-300 font-bold">&#128176; <span id="betaShopGold">0</span>g</span>
     </div>
-    <div id="betaShopItems" class="space-y-3 mb-6"></div>
+    <div id="betaShopItems" class="mb-6">
+      <!-- Top: Jokers -->
+      <div class="mb-4 bg-black/30 p-3 rounded-xl border border-purple-500/30">
+        <h3 class="text-xs uppercase tracking-widest text-purple-300 font-bold mb-2">&#127183; Jokers</h3>
+        <div id="betaShopJokers" class="grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
+      </div>
+      <!-- Bottom: Relics (left) + Consumables (right) -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="bg-black/30 p-3 rounded-xl border border-pink-500/30">
+          <h3 class="text-xs uppercase tracking-widest text-pink-300 font-bold mb-2">&#128081; Relics</h3>
+          <div id="betaShopRelics" class="space-y-2"></div>
+        </div>
+        <div class="bg-black/30 p-3 rounded-xl border border-amber-500/30">
+          <h3 class="text-xs uppercase tracking-widest text-amber-300 font-bold mb-2">&#127881; Consumables &amp; Services</h3>
+          <div id="betaShopConsumables" class="space-y-2"></div>
+        </div>
+      </div>
+    </div>
     <button id="betaShopContinueBtn" class="w-full bg-blue-600 hover:bg-blue-700 transition px-6 py-3 rounded-lg font-bold">Continue to Floor <span id="betaShopNextFloor">2</span></button>
   </div>
 
