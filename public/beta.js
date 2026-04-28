@@ -423,6 +423,7 @@
     doppelganger:  { id: 'doppelganger',  name: 'Doppelganger',   rarity: 'Legendary', price: 400, desc: "Once per round, your next play exactly mimics the previous play (same count, same claim)." },
     deadHand:      { id: 'deadHand',      name: 'Dead Hand',      rarity: 'Legendary', price: 400, desc: "Once per floor: when you take the pile, the first 2 Jacks stay in the pile (sent to the bottom of the draw pile instead of your hand)." },
     patron:        { id: 'patron',        name: 'The Patron',     rarity: 'Legendary', price: 400, desc: "+1g per Gilded card in your hand on every turn (stacks with Gilded's base +2g)." },
+    hometownHero:  { id: 'hometownHero',  name: 'Hometown Hero',   rarity: 'Uncommon',  price: 150, desc: 'Each round: at least 50% of your starting hand is drawn from your own run deck (vs. 30% baseline).' },
   };
   const SLOW_HAND_WINDOW_MS = 10000;
   const SPIKED_TRAP_DRAWS = 3;
@@ -475,6 +476,7 @@
     { id: 'markedDeck',     name: 'Marked Deck',     price: 100, desc: 'Floor-locked. Apply a chosen affix to a random draw-pile card.', enabled: true },
     { id: 'jokersMask',     name: "The Joker's Mask",price: 75,  desc: 'One-shot: tag a non-Jack so it counts as a Jack for the curse (use with Safety Net / Vengeful Spirit).', enabled: true },
     { id: 'mirrorShard',    name: 'Mirror Shard',    price: 45,  desc: 'Arm: the next Liar call against you reveals only the result, not the cards.', enabled: true },
+    { id: 'stackedHand',    name: 'Stacked Hand',    price: 100, desc: 'Arm: next round, +20% extra of your starting hand is pulled from your run deck. Stacks with Hometown Hero.', enabled: true },
     {
       id: 'glassShard',
       name: 'Glass Shard',
@@ -532,6 +534,7 @@
     { id: 'doppelganger', name: 'JOKER · Doppelganger',   price: 400, desc: '[Legendary] Once per round: next play forced to match previous play (count + claim).',                          enabled: true, type: 'joker' },
     { id: 'deadHand',     name: 'JOKER · Dead Hand',      price: 400, desc: '[Legendary] Once per floor: 2 Jacks in a pile you take are kept out of your hand.',                             enabled: true, type: 'joker' },
     { id: 'patron',       name: 'JOKER · The Patron',     price: 400, desc: '[Legendary] +1g per Gilded card in hand each turn (stacks with Gilded base).',                                  enabled: true, type: 'joker' },
+    { id: 'hometownHero', name: 'JOKER · Hometown Hero',  price: 150, desc: '[Uncommon] Starting hand draws at least 50% from your own run deck (vs 30% base).',                                  enabled: true, type: 'joker' },
   ];
 
   // Phase 3: random events at the Event fork node.
@@ -715,7 +718,7 @@
     // Build identity
     ironWill:      { id: 'ironWill',      cat: 'Build',       name: 'Iron Will',        desc: 'Win a run with at least 4 Steel-affixed cards in your run deck.', unlocks: 'Steel border tint' },
     glassCannon:   { id: 'glassCannon',   cat: 'Build',       name: 'Glass Cannon',     desc: 'Burn 100 cards across all runs.',                                  unlocks: 'Glass alt VFX' },
-    massForgery:   { id: 'massForgery',   cat: 'Build',       name: 'Mass Forgery',     desc: 'Make 4 of your run-deck cards be the same card via Forger.',     unlocks: '\"Forger\" alt joker portrait' },
+    massForgery:   { id: 'massForgery',   cat: 'Build',       name: 'Mass Forgery',     desc: 'Make 7 of your run-deck cards be the same card via Forger.',     unlocks: '\"Forger\" alt joker portrait' },
     pacifier:      { id: 'pacifier',      cat: 'Build',       name: 'The Pacifier',     desc: 'Hold a Cursed card for 5 consecutive rounds.',                    unlocks: 'Cursed alt VFX' },
     affixConn:     { id: 'affixConn',     cat: 'Build',       name: 'Affix Connoisseur',desc: 'Have all 8 affixes appear simultaneously in your run deck.',     unlocks: 'Rainbow border tint' },
     // Economy / fluff
@@ -1003,6 +1006,7 @@
     const deck = buildDeck();
     const { hands, drawPile } = deal(deck);
     applyJackFairness(hands, drawPile);
+    enforceOwnDeckMinimum(hands, drawPile);
 
     // Vengeful Spirit: preload Jacks into targets' hands. We swap their non-Jack
     // cards back into the draw pile to make room. Cap at limit-1 so we never
@@ -1104,6 +1108,7 @@
       mirrorShardArmed: false,   // Mirror Shard: blind the next reveal against you
       emptyThreatPending: false, // Empty Threat: next bot bluffs cautiously once
       magicianUsedThisRound: false, // Magician character: per-round transform
+      stackedHandActive: !!(runState && runState.stackedHandPending), // Stacked Hand: own-deck +20% this round
       // Achievement: Liar's Tongue tracks human lies per round.
       humanLiesThisRound: 0,
       humanCaughtThisRound: false,
@@ -1171,6 +1176,10 @@
     }
     if (gamblerCursedRank) {
       log("Gambler's curse: a Cursed " + gamblerCursedRank + ' is forced into your hand.');
+    }
+    if (runState && runState.stackedHandPending) {
+      runState.stackedHandPending = false;
+      log('Stacked Hand: own-deck floor +20% applied to this round.');
     }
 
     state.humanFirstTurn = true;
@@ -1698,6 +1707,39 @@
       limit = 6;
     }
     return limit - greedyDrop;
+  }
+
+  // Minimum fraction of the human's starting hand that must come from their
+  // own run deck. Default 30%; jokers/consumables can raise it.
+  const OWN_DECK_MIN_FRACTION_BASE = 0.30;
+  function ownDeckMinFraction() {
+    let f = OWN_DECK_MIN_FRACTION_BASE;
+    if (hasJoker('hometownHero')) f = Math.max(f, 0.50);
+    if (state && state.stackedHandActive) f += 0.20;
+    if (f > 1.0) f = 1.0;
+    return f;
+  }
+
+  // Post-deal: force the human's starting hand to contain at least N cards
+  // from their own run deck (where N = ceil(handSize * minFraction)). We
+  // swap non-own cards out of the hand and own cards in from the draw pile.
+  // Steel/Cursed/etc. all count fine since they're identified by owner.
+  function enforceOwnDeckMinimum(hands, drawPile) {
+    if (!runState || !hands || !hands[0]) return;
+    const handSize = hands[0].length;
+    if (handSize === 0) return;
+    const target = Math.ceil(handSize * ownDeckMinFraction());
+    const ownCount = () => hands[0].filter(c => c.owner === 0).length;
+    let safety = handSize * 4;
+    while (ownCount() < target && safety-- > 0) {
+      const outIdx = hands[0].findIndex(c => c.owner !== 0);
+      const inIdx = drawPile.findIndex(c => c.owner === 0);
+      if (outIdx === -1 || inIdx === -1) break;
+      const out = hands[0].splice(outIdx, 1)[0];
+      const inn = drawPile.splice(inIdx, 1)[0];
+      hands[0].push(inn);
+      drawPile.unshift(out);
+    }
   }
 
   function applyJackFairness(hands, drawPile) {
@@ -2808,6 +2850,7 @@
     markedDeck:    { name: 'Marked Deck',    desc: 'Floor-locked. Apply a chosen affix to a random draw-pile card.' },
     jokersMask:    { name: "The Joker's Mask",desc: 'Tag a non-Jack so it counts as a Jack for the Jack curse this round.' },
     mirrorShard:   { name: 'Mirror Shard',   desc: 'Arm: the next Liar call against you shows only the result, not the cards.' },
+    stackedHand:   { name: 'Stacked Hand',   desc: 'Arm: next round, your starting hand pulls +20% additional cards from your own run deck.' },
   };
   // Map id -> use-handler for new consumables. Old ones (smoke / counterfeit /
   // jackBeNimble) still have their own buttons in the action bar; we let those
@@ -2826,6 +2869,7 @@
     markedDeck:     () => useMarkedDeck(),
     jokersMask:     () => useJokersMask(),
     mirrorShard:    () => useMirrorShard(),
+    stackedHand:    () => useStackedHand(),
   };
 
   function _consumableUsableNow(id) {
@@ -4979,7 +5023,7 @@
             // Mass Forgery: count copies of this rank+affix in the run deck.
             const sig = target.rank + ':' + (target.affix || '_');
             const matches = runState.runDeck.filter(c => (c.rank + ':' + (c.affix || '_')) === sig).length;
-            if (matches >= 4) _achGrant('massForgery');
+            if (matches >= 7) _achGrant('massForgery');
             log('Forger: target becomes ' + target.rank +
                 (target.affix ? ' [' + target.affix + ']' : '') +
                 '. (-' + item.price + 'g)');
@@ -5839,6 +5883,22 @@
     _consumeCharge('mirrorShard');
     state.mirrorShardArmed = true;
     log('Mirror Shard armed: the next Liar call against you reveals only the result.');
+    render();
+  }
+
+  // ---- Stacked Hand ----
+  // Arms a one-time +20% own-deck floor for the NEXT round's deal.
+  // We persist the flag on runState so it survives the round transition.
+  function useStackedHand() {
+    if (!_consumableUsableNow('stackedHand')) return;
+    if ((runState.inventory.stackedHand || 0) < 1) return;
+    if (runState.stackedHandPending) {
+      log('Stacked Hand already armed for next round.');
+      return;
+    }
+    _consumeCharge('stackedHand');
+    runState.stackedHandPending = true;
+    log('Stacked Hand armed: next round\'s starting hand pulls +20% extra from your run deck.');
     render();
   }
 
