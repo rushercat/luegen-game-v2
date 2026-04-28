@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const RANKS_PLAYABLE = ['A', 'K', 'Q', '10'];        // valid target ranks
 const ALL_RANKS = ['A', 'K', 'Q', '10', 'J'];        // includes Jack (wild bluff)
 const HAND_SIZE = 5;
-const RUN_DECK_PER_RANK = 3;                          // each player: 3 of A/K/Q/10 = 12 cards
+const RUN_DECK_PER_RANK = 2;                          // each player: 2 of A/K/Q/10 = 8 cards (matches design doc)
 const ROUND_DECK_RANK_CAP = 8;                        // max cards of any rank in a round
 const BASE_JACKS_PER_ROUND = 6;                       // base J's added by the table
 const STARTING_HEARTS = 3;
@@ -32,7 +32,7 @@ const CHARACTERS = {
   ace:       { id: 'ace',       name: 'The Ace',       startingJoker: 'sleightOfHand' },
   trickster: { id: 'trickster', name: 'The Trickster', startingJoker: 'doubletalk' },
   hoarder:   { id: 'hoarder',   name: 'The Hoarder',   handSizeBonus: 1, startingJoker: 'slowHand' },
-  banker:    { id: 'banker',    name: 'The Banker',    startingGold: 150, startingGildedA: true, startingJoker: 'surveyor' },
+  banker:    { id: 'banker',    name: 'The Banker',    startingGold: 0,   startingGildedA: true, startingJoker: 'surveyor' },
   bait:      { id: 'bait',      name: 'The Bait',      startingJoker: 'spikedTrap', peekAtRoundStart: true },
   gambler:   { id: 'gambler',   name: 'The Gambler',   goldMultiplier: 1.5, startingJoker: 'blackHole', forcedCursedOnNewFloor: true },
   sharp:     { id: 'sharp',     name: 'The Sharp',     startingJoker: 'tattletale', sharpChallengeBonusMs: 1000 },
@@ -59,8 +59,9 @@ const JOKER_CATALOG = {
   doubletalk:     { id: 'doubletalk',     name: 'Doubletalk',       rarity: 'Rare',      price: 250, desc: 'Once per round: play 2-4 cards instead of 1-3.' },
   blackHole:      { id: 'blackHole',      name: 'Black Hole',       rarity: 'Legendary', price: 400, desc: 'On a successful Jack bluff (no challenge), delete one non-Jack from your hand.' },
   coldRead:       { id: 'coldRead',       name: 'Cold Read',        rarity: 'Legendary', price: 400, desc: 'Round start: see one random card from each opponent.' },
-  vengefulSpirit: { id: 'vengefulSpirit', name: 'Vengeful Spirit',  rarity: 'Legendary', price: 400, desc: 'If a Jack curse eliminates you, the next active player is also eliminated.' },
+  vengefulSpirit: { id: 'vengefulSpirit', name: 'Vengeful Spirit',  rarity: 'Legendary', price: 400, desc: 'If a Jack curse eliminates you, the next active player loses 2 heart-shards (cascades to a Heart on underflow).' },
   callersMark:    { id: 'callersMark',    name: "Caller's Mark",    rarity: 'Uncommon',  price: 150, desc: "First LIAR call each round: +20g if right, -15g if wrong. Rewards reads, punishes spam." },
+  screamer:       { id: 'screamer',       name: 'The Screamer',     rarity: 'Mythic',    price: 500, desc: 'Once per floor: name a rank. For the rest of that round, every card of that rank in any hand is publicly revealed.' },
 };
 
 // Relic catalog — permanent passive bonuses, one of each per run.
@@ -98,7 +99,7 @@ const FLOOR_MODIFIERS = {
 
 // Boss floors — 3, 6, 9. Boss "specials" in PvP show as floor banners.
 const BOSS_CATALOG = {
-  auditor: { id: 'auditor', name: 'The Auditor', floor: 3, desc: 'Boss floor — challenge windows are halved.' },
+  auditor: { id: 'auditor', name: 'The Auditor', floor: 3, desc: 'Boss floor — every Nth play is auto-challenged. Count plays.' },
   cheater: { id: 'cheater', name: 'The Cheater', floor: 6, desc: 'Boss floor — first play of each round is forced.' },
   lugen:   { id: 'lugen',   name: 'Lugen',       floor: 9, desc: 'Final boss — Jacks count as wild for callers.' },
 };
@@ -118,6 +119,7 @@ const SHOP_ITEMS = [
   { id: 'tracer',        name: 'Tracer',              price: 40,  desc: 'See top 3 of draw pile, rearrange them (consumable — use on your turn).', enabled: true, type: 'consumable' },
   { id: 'devilsBargain', name: "Devil's Bargain",     price: 55,  desc: 'Drop a hand card to bottom of draw pile; draw the top with Cursed (consumable).', enabled: true, type: 'consumable' },
   { id: 'magnet',        name: 'Magnet',              price: 75,  desc: 'Give one of your hand cards (not Steel) to a random opponent (consumable).', enabled: true, type: 'consumable' },
+  { id: 'luckyCharm',    name: 'Lucky Charm',         price: 60,  desc: 'Use to add a stack: the NEXT shop visit gets +100% per stack on Rare / Legendary / Mythic joker chance. Stacks burn on the next shop.', enabled: true, type: 'consumable' },
   { id: 'crackedCoin',   name: 'RELIC · Cracked Coin', price: 200, desc: '[Relic] Each round start: gain 5g × Hearts remaining.', enabled: true, type: 'relic' },
   { id: 'loadedDie',     name: 'RELIC · Loaded Die',   price: 200, desc: '[Relic] Once per floor, reroll the Target Rank.', enabled: true, type: 'relic' },
   { id: 'pocketWatch',   name: 'RELIC · Pocket Watch', price: 200, desc: '[Relic] +5 seconds challenge window (stacks).', enabled: true, type: 'relic' },
@@ -137,7 +139,8 @@ const SHOP_ITEMS = [
   { id: 'doubletalk',    name: 'JOKER · Doubletalk',   price: 250, desc: '[Rare] Once per round: play 2-4 cards.', enabled: true, type: 'joker' },
   { id: 'blackHole',     name: 'JOKER · Black Hole',   price: 400, desc: '[Legendary] Successful Jack bluff: delete a non-Jack.', enabled: true, type: 'joker' },
   { id: 'coldRead',      name: 'JOKER · Cold Read',    price: 400, desc: '[Legendary] Round start: see 1 card from each opponent.', enabled: true, type: 'joker' },
-  { id: 'vengefulSpirit',name: 'JOKER · Vengeful Spirit', price: 400, desc: '[Legendary] Jack-cursed = drag next active player down.', enabled: true, type: 'joker' },
+  { id: 'vengefulSpirit',name: 'JOKER · Vengeful Spirit', price: 400, desc: '[Legendary] Jack-cursed: next active player loses 2 shards (cascades to ♥).', enabled: true, type: 'joker' },
+  { id: 'screamer',      name: 'JOKER · The Screamer', price: 500, desc: '[Mythic] Once per floor: name a rank, all matching cards in every hand revealed for the rest of the round.', enabled: true, type: 'joker' },
 ];
 
 // Random events at the Event fork node.
@@ -182,7 +185,8 @@ function floorRng(seed, floor) {
   return _seededRng(intSeed);
 }
 
-const SHOP_RARITY_WEIGHTS = { Common: 60, Uncommon: 25, Rare: 10, Legendary: 5 };
+// Mythic = same shop weight as Legendary (5). Renders red on the client.
+const SHOP_RARITY_WEIGHTS = { Common: 60, Uncommon: 25, Rare: 10, Legendary: 5, Mythic: 5 };
 const SHOP_OFFER_CONSUMABLES = 3;
 const SHOP_OFFER_JOKERS = 3;
 const SHOP_OFFER_RELICS = 2;
@@ -336,6 +340,10 @@ function publicBetaState(room, requestingPlayerId) {
       price: shopCardPriceFor(me, c),
       boughtByMe: !!(c.bought && me && c.bought[me.id]),
     })),
+    // Screamer's "publicly revealed rank" — when set, every player sees the
+    // matching cards in every other player's hand. Counts only, not ids,
+    // since the hidden cards never leave the server.
+    screamerRevealedRank: room.screamerRevealedRank || null,
     players: room.players.map(p => ({
       id: p.id,
       name: p.name,
@@ -361,6 +369,13 @@ function publicBetaState(room, requestingPlayerId) {
       })(),
       relics: (p.relics || []).slice(),
       inventoryCount: Object.values(p.inventory || {}).reduce((a, b) => a + b, 0),
+      // If The Screamer is active this round, leak each player's matching
+      // cards (rank+affix only — no ids, so the cards still can't be
+      // referenced for play by anyone else).
+      revealedCards: (room.screamerRevealedRank && p.hand)
+        ? p.hand.filter(c => c.rank === room.screamerRevealedRank)
+                .map(c => ({ rank: c.rank, affix: c.affix || null }))
+        : [],
     })),
     mine: me
       ? {
@@ -371,8 +386,18 @@ function publicBetaState(room, requestingPlayerId) {
           jokers: (me.jokers || []).map(j => j ? { id: j.id, name: j.name, rarity: j.rarity, desc: j.desc } : null),
           relics: (me.relics || []).slice(),
           tattletaleCharges: (room.tattletaleChargesFloor && room.tattletaleChargesFloor[me.id]) || 0,
+          screamerCharges:   (room.screamerChargesFloor   && room.screamerChargesFloor[me.id])   || 0,
           loadedDieUsed: !!(room.loadedDieUsedFloor && room.loadedDieUsedFloor[me.id]),
           counterfeitUsedRound: !!(room.counterfeitUsedRound && room.counterfeitUsedRound[me.id]),
+          // Doubletalk + Sleight of Hand: surface arm + per-round used flags
+          // so the UI can render correct button states (was: silent, joker
+          // looked broken to the player).
+          doubletalkArmed:     !!(room.doubletalkArmed && room.doubletalkArmed[me.id]),
+          doubletalkUsedRound: !!(room.doubletalkUsedRound && room.doubletalkUsedRound[me.id]),
+          sleightUsedRound:    !!(room.sleightUsedRound && room.sleightUsedRound[me.id]),
+          // Counterfeit's lock — a single shared flag while a Counterfeit
+          // is in effect until the next LIAR resolution.
+          targetLockedUntilLiar: !!room.targetLockedUntilLiar,
           peeks: myPeeks,
           surveyorTop,
           forkPick: (room.forkPicks && room.forkPicks[me.id]) || null,
@@ -416,7 +441,10 @@ function buildInitialRunDeck(playerIdx) {
 function applyCharacter(player) {
   const ch = player.character;
   if (!ch) return;
-  if (ch.startingGold) player.gold = ch.startingGold;
+  // Use typeof check so a literal `0` (Banker now starts broke) actually
+  // applies — `if (ch.startingGold)` would slip past 0 and leave the
+  // default 50g, defeating the nerf.
+  if (typeof ch.startingGold === 'number') player.gold = ch.startingGold;
   if (ch.startingGildedA) {
     const aCard = player.runDeck.find(c => c.rank === 'A' && !c.affix);
     if (aCard) aCard.affix = 'gilded';
@@ -518,12 +546,62 @@ function triggerGildedTurn(room, playerIdx) {
   }
 }
 
-// Spiked + Glass + Steel resolution when a player picks up the pile.
-// Mutates the pile array in place (cards removed by Glass burns are gone).
-// Returns the (possibly trimmed) pile to be appended to the picker's hand.
+// Glass burns fire ON REVEAL (every successful LIAR resolution that flips
+// the played cards face-up), per the design doc. Each Glass card in the
+// just-revealed plays burns itself + GLASS_BURN_RANDOM other random non-
+// Steel cards from the wider pile (which can include prior plays). The
+// trimmed pile is what subsequently gets distributed to the liar or the
+// challenger. Burned cards are tracked on `room.burnedCards` for the
+// per-round burn cap; on overflow they recycle into the draw pile.
+//
+// Pre-refactor (before this fix) Glass triggered inside applyPickupAffixes
+// — i.e. only when somebody actually picked up a pile. That made Glass a
+// no-op on passed challenges and broke the design's Glass-on-reveal rule.
+function applyGlassBurnOnReveal(room, revealedCards) {
+  if (!revealedCards || revealedCards.length === 0) return;
+  const glassRevealed = revealedCards.filter(c => c.affix === 'glass');
+  if (glassRevealed.length === 0) return;
+  for (const glass of glassRevealed) {
+    if (!room.pile.includes(glass)) continue;
+    const burnedThisTrigger = [];
+    const gi = room.pile.indexOf(glass);
+    if (gi !== -1) room.pile.splice(gi, 1);
+    burnedThisTrigger.push(glass);
+    if (glass.owner !== undefined && glass.owner >= 0) {
+      const owner = room.players[glass.owner];
+      if (owner) owner._ironStomachBurned = (owner._ironStomachBurned || []).concat([glass.id]);
+    }
+    const burnable = room.pile.filter(c => c.affix !== 'steel');
+    const sh = shuffle(burnable);
+    const targets = sh.slice(0, GLASS_BURN_RANDOM);
+    for (const t of targets) {
+      const ti = room.pile.indexOf(t);
+      if (ti !== -1) room.pile.splice(ti, 1);
+      burnedThisTrigger.push(t);
+      if (t.owner !== undefined && t.owner >= 0) {
+        const owner = room.players[t.owner];
+        if (owner) owner._ironStomachBurned = (owner._ironStomachBurned || []).concat([t.id]);
+      }
+    }
+    room.burnedCards = (room.burnedCards || []).concat(burnedThisTrigger);
+    log(room, `Glass: burned ${burnedThisTrigger.length} card${burnedThisTrigger.length === 1 ? '' : 's'} (${room.burnedCards.length}/${BURN_CAP} total).`);
+    if (room.burnedCards.length > BURN_CAP) {
+      const recycled = room.burnedCards.length;
+      for (const c of room.burnedCards) room.drawPile.push(c);
+      room.drawPile = shuffle(room.drawPile);
+      room.burnedCards = [];
+      log(room, `Burn cap reached — ${recycled} burned cards shuffled back into the draw pile. Counter resets.`);
+    }
+  }
+}
+
+// Spiked + Steel resolution when a player picks up the pile.
+// (Glass used to live here too — it now fires on reveal, see
+// applyGlassBurnOnReveal above.)
+// Returns the pile (untouched here; Glass already trimmed it on reveal).
 function applyPickupAffixes(room, picker, pile) {
   if (!pile || pile.length === 0) return pile;
-  // 1) Spiked: each Spiked in the pile = picker draws +1 from draw pile.
+  // Spiked: each Spiked in the pile = picker draws +1 from draw pile.
   let spikedCount = pile.filter(c => c.affix === 'spiked').length;
   let drew = 0;
   while (spikedCount > 0 && room.drawPile.length > 0) {
@@ -532,46 +610,6 @@ function applyPickupAffixes(room, picker, pile) {
     drew++;
   }
   if (drew > 0) log(room, `Spiked: ${picker.name} draws +${drew}.`);
-  // 2) Glass: each Glass card burns itself + GLASS_BURN_RANDOM random
-  //    non-Steel pile cards. Track burned run-deck cards on the OWNER for
-  //    Iron Stomach restoration at end of round.
-  const glassCards = pile.filter(c => c.affix === 'glass');
-  for (const glass of glassCards) {
-    if (!pile.includes(glass)) continue;
-    const burnedThisTrigger = [];
-    const gi = pile.indexOf(glass);
-    if (gi !== -1) pile.splice(gi, 1);
-    burnedThisTrigger.push(glass);
-    if (glass.owner !== undefined && glass.owner >= 0) {
-      const owner = room.players[glass.owner];
-      if (owner) owner._ironStomachBurned = (owner._ironStomachBurned || []).concat([glass.id]);
-    }
-    const burnable = pile.filter(c => c.affix !== 'steel');
-    const sh = shuffle(burnable);
-    const targets = sh.slice(0, GLASS_BURN_RANDOM);
-    for (const t of targets) {
-      const ti = pile.indexOf(t);
-      if (ti !== -1) pile.splice(ti, 1);
-      burnedThisTrigger.push(t);
-      if (t.owner !== undefined && t.owner >= 0) {
-        const owner = room.players[t.owner];
-        if (owner) owner._ironStomachBurned = (owner._ironStomachBurned || []).concat([t.id]);
-      }
-    }
-    // Track total burns this round
-    room.burnedCards = (room.burnedCards || []).concat(burnedThisTrigger);
-    log(room, `Glass: burned ${burnedThisTrigger.length} card${burnedThisTrigger.length === 1 ? '' : 's'} (${room.burnedCards.length}/${BURN_CAP} total).`);
-    // Burn cap overflow — when total burns exceed cap, all burned cards
-    // (including this trigger's) shuffle back into the draw pile.
-    if (room.burnedCards.length > BURN_CAP) {
-      const recycled = room.burnedCards.length;
-      // Strip affixes? Design says recycled, not specified. Keep affixes intact.
-      for (const c of room.burnedCards) room.drawPile.push(c);
-      room.drawPile = shuffle(room.drawPile);
-      room.burnedCards = [];
-      log(room, `Burn cap reached — ${recycled} burned cards shuffled back into the draw pile. Counter resets.`);
-    }
-  }
   return pile;
 }
 
@@ -612,6 +650,21 @@ function regenerateShopOffer(room) {
   const consumables = SHOP_ITEMS.filter(i => i.type === 'consumable' || i.type === 'service');
   const enabledConsumables = consumables.filter(i => i.enabled);
   const pickedConsumables = shuffle(enabledConsumables).slice(0, SHOP_OFFER_CONSUMABLES);
+  // Lucky Charm boost — sums every player's accumulated stacks. Each stack
+  // adds +100% to the rarity weight of Rare / Legendary / Mythic jokers
+  // for THIS shop generation. Stacks burn here so the next shop is fresh.
+  // Pooling across players is intentional: in PvP everyone shares the
+  // shopOffer, so anyone can prime it for everyone (co-op-leaning).
+  let luckStacks = 0;
+  if (room.luckyCharmStacks) {
+    for (const k of Object.keys(room.luckyCharmStacks)) {
+      luckStacks += (room.luckyCharmStacks[k] || 0);
+    }
+  }
+  const luckMult = 1 + luckStacks; // 1 stack → 2x, 2 stacks → 3x, etc.
+  const BOOSTED = { Rare: true, Legendary: true, Mythic: true };
+  const weightFor = (rarity) =>
+    (SHOP_RARITY_WEIGHTS[rarity] || 1) * (BOOSTED[rarity] ? luckMult : 1);
   // Jokers — rarity weighted, exclude jokers any player already owns? In MP we just exclude by rarity.
   const jokers = SHOP_ITEMS.filter(i => i.type === 'joker');
   const pickedJokers = [];
@@ -621,18 +674,22 @@ function regenerateShopOffer(room) {
     for (const j of remaining) {
       const cat = JOKER_CATALOG[j.id];
       const rarity = cat ? cat.rarity : 'Common';
-      totalWeight += (SHOP_RARITY_WEIGHTS[rarity] || 1);
+      totalWeight += weightFor(rarity);
     }
     let r = Math.random() * totalWeight;
     let pickedIdx = 0;
     for (let i = 0; i < remaining.length; i++) {
       const cat = JOKER_CATALOG[remaining[i].id];
       const rarity = cat ? cat.rarity : 'Common';
-      r -= (SHOP_RARITY_WEIGHTS[rarity] || 1);
+      r -= weightFor(rarity);
       if (r <= 0) { pickedIdx = i; break; }
     }
     pickedJokers.push(remaining[pickedIdx]);
     remaining.splice(pickedIdx, 1);
+  }
+  if (luckStacks > 0) {
+    log(room, `Lucky Charm: ${luckStacks} stack${luckStacks === 1 ? '' : 's'} boosted Rare/Legendary/Mythic by ×${luckMult}. Stacks consumed.`);
+    room.luckyCharmStacks = {};
   }
   // Relics removed from regular shop — they are awarded post-boss only.
   room.shopOffer = [].concat(pickedConsumables, pickedJokers);
@@ -681,8 +738,9 @@ function shopBuyCard(room, playerId, offerId) {
   if ((p.gold || 0) < effectivePrice) return { error: 'Not enough gold.' };
   if ((p.runDeck || []).length >= 24) return { error: 'Run deck is at the cap (24).' };
   p.gold -= effectivePrice;
-  const newId = 'p' + room.players.indexOf(p) + '_shop_' + off.offerId;
-  p.runDeck.push({ rank: off.rank, id: newId, owner: room.players.indexOf(p), affix: off.affix || null });
+  // Renamed from `newId` (which shadowed the imported helper at file top).
+  const cardId = 'p' + room.players.indexOf(p) + '_shop_' + off.offerId;
+  p.runDeck.push({ rank: off.rank, id: cardId, owner: room.players.indexOf(p), affix: off.affix || null });
   off.bought = off.bought || {};
   off.bought[playerId] = true;
   log(room, p.name + ' bought a ' + off.rank + (off.affix ? ' [' + off.affix + ']' : ' (plain)') + ' for ' + effectivePrice + 'g.');
@@ -713,6 +771,11 @@ function startRun(room) {
   room.currentFloorModifier = null;
   room.seed = _generateRunSeed();
   room.currentBoss = isBossFloor(1) ? getBoss(1) : null;
+  // Per-floor charge counters — must exist before startRound runs so any
+  // floor-1 char that grants Tattletale (e.g. The Sharp) sees a real charge.
+  room.tattletaleChargesFloor = {};
+  room.screamerChargesFloor = {};
+  room.loadedDieUsedFloor = {};
   for (let i = 0; i < room.players.length; i++) {
     const p = room.players[i];
     p.runDeck = buildInitialRunDeck(i);
@@ -726,6 +789,15 @@ function startRun(room) {
     p.inventory = {};
     p.relics = [];
     applyCharacter(p);
+    // Seed Tattletale charge for any character that started with it
+    // (currently The Sharp). Without this, floor 1's charge counter is 0
+    // because the per-floor seeder only runs when ADVANCING to a new floor.
+    if (playerHasJoker(p, 'tattletale')) {
+      room.tattletaleChargesFloor[p.id] = 1;
+    }
+    if (playerHasJoker(p, 'screamer')) {
+      room.screamerChargesFloor[p.id] = 1;
+    }
   }
   room.phase = 'round';
   log(room, `Run started — Floor 1 of ${TOTAL_FLOORS}.`);
@@ -791,6 +863,14 @@ function startRound(room) {
   room.echoArmedFor = -1;
   room.counterfeitUsedRound = {};
   room.counterfeitLockedRanks = {};
+  // Clear the Counterfeit "lock" each round in case a round ended with no
+  // LIAR call (e.g. someone emptied their hand on a passed challenge).
+  room.targetLockedUntilLiar = false;
+  // Auditor's per-round play counter. The boss's N is per-floor, but the
+  // counter resets each round so the tell stays legible across rounds.
+  room.auditorPlayCount = 0;
+  // Screamer's "publicly revealed rank" lasts only the round it was named.
+  room.screamerRevealedRank = null;
   room.sleightUsedRound = {};
   room.doubletalkArmed = {};
   room.doubletalkUsedRound = {};
@@ -937,9 +1017,14 @@ function startRound(room) {
     if (!p.character || !p.character.whisperPeek) continue;
     const myIdx = room.players.indexOf(p);
     const dir = (room.whisperDirection && room.whisperDirection[p.id]) === 'right' ? -1 : 1;
+    const len = room.players.length;
     let nextIdx = myIdx;
-    for (let n = 1; n < room.players.length; n++) {
-      const ni = (myIdx + n * dir + room.players.length * room.players.length) % room.players.length;
+    for (let n = 1; n < len; n++) {
+      // (n * dir) can be negative for the right-direction Whisper. A single
+      // `+ len` is enough to make the modulus positive (n < len, so the most
+      // negative offset is -(len-1) which + len ≥ 1). The earlier `len*len`
+      // term was an overcautious guard.
+      const ni = ((myIdx + n * dir) % len + len) % len;
       const np = room.players[ni];
       if (np && !np.eliminated && np.hand && np.hand.length > 0) { nextIdx = ni; break; }
     }
@@ -963,58 +1048,63 @@ function startRound(room) {
     }
   }
 
-  // Pick first turn — first non-eliminated player. Done BEFORE the target
-  // pick so the bias below can read the starter's run deck.
-  room.currentTurnIdx = 0;
-  for (let i = 0; i < room.players.length; i++) {
-    if (!room.players[i].eliminated) { room.currentTurnIdx = i; break; }
-  }
-
-  // Target rank is biased toward whichever non-Jack rank the starter has
-  // the most of in their RUN DECK (70% biased, 30% pure random). The run
-  // deck is the persistent build (Forger / Distillation / shop swaps /
-  // reward upgrades have all gone in there); reading from the dealt hand
-  // was noisier and rewarded lucky deals over actual build choices.
-  //
-  // Tie rule: if there's no clear winner — top count shared by more than
-  // one rank — fall back to pure random. So a stock 3-3-3-3 deck always
-  // rolls random, and only intentional stacking biases the target.
-  const TARGET_BIAS_CHANCE = 0.70;
-  const _starter = room.players[room.currentTurnIdx];
-  const _starterDeck = (_starter && _starter.runDeck) || [];
-  const _counts = {};
-  for (const r of RANKS_PLAYABLE) _counts[r] = 0;
-  for (const c of _starterDeck) {
-    if (_counts[c.rank] !== undefined) _counts[c.rank]++;
-  }
-  let _maxCount = 0;
-  for (const r of RANKS_PLAYABLE) if (_counts[r] > _maxCount) _maxCount = _counts[r];
-  const _top = RANKS_PLAYABLE.filter(r => _counts[r] === _maxCount);
-  if (_maxCount > 0 && _top.length === 1 && Math.random() < TARGET_BIAS_CHANCE) {
-    room.targetRank = _top[0];
+  // Pick first turn — rotate leadership so seat 0 doesn't always lead.
+  // Within a floor: previous round's winner leads next round (room
+  // .nextRoundLeaderIdx is set in endRound). Across floors / on run start,
+  // we rotate by total rounds played so the long-run lead distribution is
+  // even. If the chosen leader is eliminated, we walk forward to the next
+  // active seat.
+  let leadIdx;
+  if (typeof room.nextRoundLeaderIdx === 'number' &&
+      room.players[room.nextRoundLeaderIdx] &&
+      !room.players[room.nextRoundLeaderIdx].eliminated) {
+    leadIdx = room.nextRoundLeaderIdx;
   } else {
-    room.targetRank = RANKS_PLAYABLE[Math.floor(Math.random() * RANKS_PLAYABLE.length)];
+    const baseRotation = (room.totalRoundsStarted || 0) % room.players.length;
+    leadIdx = baseRotation;
+    for (let n = 0; n < room.players.length; n++) {
+      const i = (baseRotation + n) % room.players.length;
+      if (room.players[i] && !room.players[i].eliminated) { leadIdx = i; break; }
+    }
   }
+  room.currentTurnIdx = leadIdx;
+  room.totalRoundsStarted = (room.totalRoundsStarted || 0) + 1;
+
+  // Target rank: pure random per design doc. (Removed: an earlier 70%-bias
+  // toward the starter's most-stacked run-deck rank, which compounded with
+  // seat-0-always-leads to give one seat a target it could nearly always
+  // play truthfully.)
+  room.targetRank = RANKS_PLAYABLE[Math.floor(Math.random() * RANKS_PLAYABLE.length)];
 
   log(room, `Floor ${room.currentFloor} round — target rank: ${room.targetRank}.`);
   // Turn-start hook (Cursed tick + auto-draw + Gilded gold)
   onTurnStart(room, room.currentTurnIdx);
   triggerGildedTurn(room, room.currentTurnIdx);
 
-  // Cheater boss (Floor 6): auto-play one random card from the first player's hand.
+  // Cheater boss (Floor 6): auto-play one random card from the first
+  // player's hand. Honor the Cursed lock — a card with cursedTurnsLeft > 0
+  // can't be played by the player normally, so the boss can't force-play
+  // it either. (Skips silently if every card is locked, which is rare but
+  // possible on a freshly-Cursed deal.)
   if (room.currentBoss && room.currentBoss.id === 'cheater') {
     const firstP = room.players[room.currentTurnIdx];
     if (firstP && firstP.hand && firstP.hand.length > 0) {
-      const c = firstP.hand[Math.floor(Math.random() * firstP.hand.length)];
-      firstP.hand = firstP.hand.filter(x => x.id !== c.id);
-      room.pile.push(c);
-      room.lastPlay = { playerIdx: room.currentTurnIdx, claim: room.targetRank, count: 1, cardIds: [c.id] };
-      log(room, `Cheater: ${firstP.name}'s first play is forced (auto-played a card as ${room.targetRank}).`);
-      if (firstP.hand.length === 0) {
-        firstP.finishedThisRound = true;
-        room.placements.push(room.currentTurnIdx);
+      const eligible = firstP.hand.filter(x =>
+        !(x.affix === 'cursed' && (x.cursedTurnsLeft || 0) > 0));
+      if (eligible.length === 0) {
+        log(room, `Cheater: ${firstP.name}'s hand is fully Cursed-locked — force-play skipped this round.`);
+      } else {
+        const c = eligible[Math.floor(Math.random() * eligible.length)];
+        firstP.hand = firstP.hand.filter(x => x.id !== c.id);
+        room.pile.push(c);
+        room.lastPlay = { playerIdx: room.currentTurnIdx, claim: room.targetRank, count: 1, cardIds: [c.id] };
+        log(room, `Cheater: ${firstP.name}'s first play is forced (auto-played a card as ${room.targetRank}).`);
+        if (firstP.hand.length === 0) {
+          firstP.finishedThisRound = true;
+          room.placements.push(room.currentTurnIdx);
+        }
+        openChallengeWindow(room);
       }
-      openChallengeWindow(room);
     }
   }
 }
@@ -1045,8 +1135,13 @@ function handlePlay(room, playerId, cardIds) {
   if (idx !== room.currentTurnIdx) return { error: 'Not your turn.' };
   if (room.challengeOpen) return { error: 'Challenge is open — wait.' };
   if (!isPlayerActive(p)) return { error: 'You are not active this round.' };
-  if (!Array.isArray(cardIds) || cardIds.length === 0 || cardIds.length > 3) {
-    return { error: 'Play 1–3 cards.' };
+  // Doubletalk joker arms the play to allow 2-4 cards. The arm is consumed
+  // when the play resolves (whether or not we hit the upper bound).
+  const doubletalkOn = !!(room.doubletalkArmed && room.doubletalkArmed[playerId]);
+  const minCount = doubletalkOn ? 2 : 1;
+  const maxCount = doubletalkOn ? 4 : 3;
+  if (!Array.isArray(cardIds) || cardIds.length < minCount || cardIds.length > maxCount) {
+    return { error: doubletalkOn ? 'Doubletalk: play 2–4 cards.' : 'Play 1–3 cards.' };
   }
   // Duplicate-id guard. Without this, a client sending ['X','X'] would clone
   // the card: it gets pushed to the pile twice but filtered from the hand
@@ -1126,6 +1221,12 @@ function handlePlay(room, playerId, cardIds) {
     count: cards.length,
     cardIds: cards.map(c => c.id),
   };
+  // Consume Doubletalk arm if it was used. The "once per round" guard
+  // (doubletalkUsedRound) was already set when the player armed it.
+  if (doubletalkOn) {
+    room.doubletalkArmed[playerId] = false;
+    log(room, `${p.name} - Doubletalk: played ${cards.length} cards.`);
+  }
   log(room, `${p.name} plays ${cards.length} card${cards.length === 1 ? '' : 's'} as ${room.targetRank}.`);
 
   // Check finish (after Hollow draws which may un-finish them)
@@ -1154,8 +1255,32 @@ function openChallengeWindow(room) {
   const leftIdx = (nextIdx === 0 ? room.players.length - 1 : nextIdx - 1);
   const left = room.players[leftIdx];
   if (left && playerHasJoker(left, 'hotSeat')) ms = Math.min(ms, HOT_SEAT_WINDOW_MS);
-  // Auditor boss (floor 3): halved windows
-  if (room.currentBoss && room.currentBoss.id === 'auditor') ms = Math.floor(ms / 2);
+  // Auditor boss (floor 3): every Nth play in the floor auto-fires the
+  // challenger's LIAR call. N is rolled once per floor in [2..4] (excluding
+  // 1 which would auto-fire every play, and 5+ which is barely noticeable).
+  // Predictability is the tell — count plays and you'll know which one is
+  // the forced reveal. (Was: half-window. Different mechanic, didn't match
+  // the solo Auditor's behavior; this version mirrors solo.)
+  if (room.currentBoss && room.currentBoss.id === 'auditor') {
+    room.auditorPlayCount = (room.auditorPlayCount || 0) + 1;
+    const N = room.auditorEveryN || 3;
+    if (room.auditorPlayCount % N === 0) {
+      log(room, `The Auditor flips its ledger — challenge incoming (every ${N} plays).`);
+      // Defer one tick so client sees the play before the auto-resolution.
+      // The deferred fire goes through handleLiar which has the same
+      // in-flight lock as a human call — no double-resolution risk.
+      room.challengeDeadline = Date.now() + 250;
+      if (room.challengeTimer) clearTimeout(room.challengeTimer);
+      room.challengeTimer = setTimeout(() => {
+        if (!betaRooms[room.id]) return;
+        if (!room.challengeOpen) return;
+        if (room.challengeInFlight) return;
+        handleLiar(room, challenger.id);
+        if (room._io) broadcast(room._io, room);
+      }, 250);
+      return;
+    }
+  }
   room.challengeDeadline = Date.now() + ms;
   if (room.challengeTimer) clearTimeout(room.challengeTimer);
   room.challengeTimer = setTimeout(() => {
@@ -1274,6 +1399,10 @@ function _handleLiarInner(room, playerId) {
   if (room.challengeTimer) { clearTimeout(room.challengeTimer); room.challengeTimer = null; }
   room.challengeDeadline = null;
 
+  // Clear Counterfeit's lock — the design says "lock through next LIAR",
+  // which means *any* LIAR resolution releases the rank for further changes.
+  room.targetLockedUntilLiar = false;
+
   const liarIdx = room.lastPlay.playerIdx;
   const liarP = room.players[liarIdx];
   const challengerP = p;
@@ -1308,14 +1437,27 @@ function _handleLiarInner(room, playerId) {
     }
   }
 
-  // Spiked Trap joker: truth-teller + challenged → challenger draws +3
+  // Glass triggers ON REVEAL — burn each played Glass + 2 random non-Steel
+  // pile cards. This trims room.pile in place; whichever path picks up the
+  // pile below sees the trimmed version. Was incorrectly running on pickup
+  // only, which silently broke Glass on passed challenges.
+  applyGlassBurnOnReveal(room, playedCards);
+
+  // Spiked Trap joker: truth-teller + challenged → challenger draws +3.
+  // Per design: "Fizzles if the pile has fewer than 3 left." We honor the
+  // fizzle as all-or-nothing — partial draws used to make Spiked Trap
+  // stronger than designed in shallow late-round states.
   if (!wasLie && playerHasJoker(liarP, 'spikedTrap')) {
-    let drew = 0;
-    while (drew < SPIKED_TRAP_DRAWS && room.drawPile.length > 0) {
-      challengerP.hand.push(room.drawPile.pop());
-      drew++;
+    if (room.drawPile.length < SPIKED_TRAP_DRAWS) {
+      log(room, `${liarP.name} - Spiked Trap fizzles (only ${room.drawPile.length} left in draw pile, needs ${SPIKED_TRAP_DRAWS}).`);
+    } else {
+      let drew = 0;
+      while (drew < SPIKED_TRAP_DRAWS && room.drawPile.length > 0) {
+        challengerP.hand.push(room.drawPile.pop());
+        drew++;
+      }
+      log(room, `${liarP.name} - Spiked Trap: ${challengerP.name} draws +${drew}.`);
     }
-    if (drew > 0) log(room, `${liarP.name} - Spiked Trap: ${challengerP.name} draws +${drew}.`);
   }
 
   if (wasLie) {
@@ -1398,20 +1540,28 @@ function _handleLiarInner(room, playerId) {
 
 // ---------- Round / floor / run resolution ----------
 function pickClosestActivePlayer(room) {
-  let best = -1, bestSize = Infinity;
+  // Find the smallest hand size among active players, then pick uniformly
+  // at random from the players tied at that size. Earlier code took the
+  // first index, which compounded the seat-0 lead bias on edge-case round
+  // resolutions where nobody emptied their hand.
+  let bestSize = Infinity;
   for (let i = 0; i < room.players.length; i++) {
     const p = room.players[i];
     if (!isPlayerActive(p)) continue;
-    if (p.hand.length < bestSize) {
-      best = i;
-      bestSize = p.hand.length;
+    if (p.hand.length < bestSize) bestSize = p.hand.length;
+  }
+  if (bestSize === Infinity) {
+    // No active — pick the latest finisher (or seat 0 as a final fallback).
+    const last = room.placements[room.placements.length - 1];
+    return typeof last === 'number' ? last : 0;
+  }
+  const candidates = [];
+  for (let i = 0; i < room.players.length; i++) {
+    if (isPlayerActive(room.players[i]) && room.players[i].hand.length === bestSize) {
+      candidates.push(i);
     }
   }
-  if (best === -1) {
-    // No active — pick the latest finisher
-    best = room.placements[room.placements.length - 1] || 0;
-  }
-  return best;
+  return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
 function endRoundIfDone(room) {
@@ -1451,15 +1601,21 @@ function endRound(room, winnerIdx, message) {
   // Round wins
   winner.roundsWon = (winner.roundsWon || 0) + 1;
 
+  // Next round of this floor: the round winner leads. (startRound reads
+  // this and falls back to a rotation if the chosen seat is eliminated.)
+  room.nextRoundLeaderIdx = winnerIdx;
+
   if (winner.roundsWon >= ROUNDS_TO_WIN_FLOOR) {
     endFloor(room, winnerIdx);
   } else {
-    // Next round on same floor
+    // Next round on same floor — short delay so clients can render the
+    // round-end state before the new deal lands. Was 1500ms; tightened to
+    // 600ms to reduce the "stale state" race surface (see review 2.7).
     setTimeout(() => {
       if (!betaRooms[room.id]) return;
       startRound(room);
       if (room._io) broadcast(room._io, room);
-    }, 1500);
+    }, 600);
   }
 }
 
@@ -1629,6 +1785,24 @@ function maybeAdvanceFromFork(room) {
     if (playerHasJoker(p, 'tattletale')) {
       room.tattletaleChargesFloor[p.id] = 1;
     }
+    if (playerHasJoker(p, 'screamer')) {
+      room.screamerChargesFloor = room.screamerChargesFloor || {};
+      room.screamerChargesFloor[p.id] = 1;
+    }
+  }
+  // Clear the round-leader pin so the new floor's first round picks via
+  // rotation, not via "whoever won the last round of the previous floor."
+  // Without this clear, the boss-floor winner would lead every round of
+  // the next floor too.
+  room.nextRoundLeaderIdx = null;
+  // Auditor boss: roll N for "every Nth play auto-fires LIAR" once per
+  // floor. Range [2..4] keeps the tell legible (1 = every play, too loud;
+  // 5+ rarely fires in best-of-3).
+  if (room.currentBoss && room.currentBoss.id === 'auditor') {
+    room.auditorEveryN = 2 + Math.floor(Math.random() * 3);
+    log(room, `The Auditor: every ${room.auditorEveryN} plays will be auto-challenged.`);
+  } else {
+    room.auditorEveryN = null;
   }
   // Expand joker slots for the new act
   for (const p of room.players) ensureJokerSlots(p, room.currentFloor);
@@ -1755,15 +1929,24 @@ function rewardPick(room, playerId, choice) {
   if (item.id === 'tattletale') {
     room.tattletaleChargesFloor[p.id] = 1;
   }
+  if (item.id === 'screamer') {
+    room.screamerChargesFloor = room.screamerChargesFloor || {};
+    room.screamerChargesFloor[p.id] = 1;
+  }
   log(room, `${p.name} took the Reward joker: ${data.name}.`);
   delete room.rewardOffers[playerId];
   room.forkPicks[playerId] = 'reward-resolved';
   return { ok: true };
 }
 
-// Apply Cleanse — either remove a Cursed run-deck card (rare) or strip an
-// affix from a run-deck card. target shape: { runDeckCardId, action: 'strip' }
-// or { handCardId, action: 'removeCursed' }
+// Apply Cleanse — strip an affix from a run-deck card.
+// target shape: { runDeckCardId, action: 'strip' }
+//
+// (The earlier `removeCursed` branch — delete a Cursed run-deck card —
+// was only reachable for RANDOM.EXE, since the Apostate reroll is the
+// only path that puts Cursed onto a run-deck card. The `strip` action
+// already neutralizes a Cursed card by removing the affix, which covers
+// that edge case without a separate code path. Branch removed.)
 function applyCleanse(room, playerId, target) {
   const p = findPlayerById(room, playerId);
   if (!p) return { error: 'Not in room.' };
@@ -1779,15 +1962,7 @@ function applyCleanse(room, playerId, target) {
     room.forkPicks[playerId] = 'cleanse-resolved';
     return { ok: true };
   }
-  if (target.action === 'removeCursed') {
-    const card = (p.runDeck || []).find(c => c.id === target.runDeckCardId && c.affix === 'cursed');
-    if (!card) return { error: 'Cursed run-deck card not found.' };
-    p.runDeck = p.runDeck.filter(c => c.id !== card.id);
-    log(room, `${p.name} cleansed: removed a Cursed ${card.rank} from their run deck.`);
-    room.forkPicks[playerId] = 'cleanse-resolved';
-    return { ok: true };
-  }
-  return { error: 'Pick action: strip or removeCursed.' };
+  return { error: 'Cleanse action must be: strip.' };
 }
 
 // Buy from the shared shop offer; player-side gold check.
@@ -1806,8 +1981,9 @@ function shopBuy(room, playerId, itemId) {
   const discount = playerHasRelic(p, 'blackMarket') ? 0.75 : 1;
   const realPrice = Math.ceil(item.price * discount);
   if ((p.gold || 0) < realPrice) return { error: 'Not enough gold.' };
-  // Override the deduction below by stashing realPrice on the closure.
-  item._realPrice = realPrice;
+  // (Was: stashing realPrice on the shared `item` reference — gross and
+  // fragile. realPrice is a local now and the per-type branches use it
+  // directly.)
   if (item.type === 'joker') {
     if (playerHasJoker(p, item.id)) return { error: 'Already equipped.' };
     ensurePlayerJokerSlots(p); // grow legacy 2-slot players to 5
@@ -1815,35 +1991,45 @@ function shopBuy(room, playerId, itemId) {
     if (slotIdx === -1) return { error: 'All joker slots full (' + p.jokers.length + ').' };
     const data = JOKER_CATALOG[item.id];
     if (!data) return { error: 'Unknown joker.' };
-    p.gold -= (item._realPrice != null ? item._realPrice : item.price);
+    p.gold -= realPrice;
     p.jokers[slotIdx] = { ...data };
     if (item.id === 'tattletale') {
       room.tattletaleChargesFloor[p.id] = 1;
     }
-    log(room, `${p.name} equipped joker: ${data.name} (-${item.price}g).`);
+    if (item.id === 'screamer') {
+      room.screamerChargesFloor = room.screamerChargesFloor || {};
+      room.screamerChargesFloor[p.id] = 1;
+    }
+    log(room, `${p.name} equipped joker: ${data.name} (-${realPrice}g).`);
     return { ok: true };
   }
   if (item.type === 'relic') {
     if (playerHasRelic(p, item.id)) return { error: 'Already owned.' };
-    p.gold -= (item._realPrice != null ? item._realPrice : item.price);
+    p.gold -= realPrice;
     p.relics = (p.relics || []).concat([item.id]);
-    log(room, `${p.name} acquired relic: ${item.name} (-${item.price}g).`);
+    log(room, `${p.name} acquired relic: ${item.name} (-${realPrice}g).`);
     return { ok: true };
   }
   if (item.type === 'consumable') {
-    p.gold -= (item._realPrice != null ? item._realPrice : item.price);
+    p.gold -= realPrice;
     p.inventory[item.id] = (p.inventory[item.id] || 0) + 1;
-    log(room, `${p.name} bought ${item.name} (-${item.price}g).`);
+    log(room, `${p.name} bought ${item.name} (-${realPrice}g).`);
     return { ok: true };
   }
   if (item.type === 'service') {
     // Two-step: payment is held until the player picks a target. Mark as pending.
     if (!room.pendingServices) room.pendingServices = {};
     if (room.pendingServices[playerId]) return { error: 'You already have a service to apply.' };
-    if ((p.gold || 0) < item.price) return { error: 'Not enough gold.' };
-    p.gold -= (item._realPrice != null ? item._realPrice : item.price);
-    room.pendingServices[playerId] = { itemId: item.id, price: item.price };
-    log(room, `${p.name} bought ${item.name} (-${item.price}g) — pick a target.`);
+    // Use realPrice for the affordability check so the Black Market relic
+    // (25% off) actually lets a player buy a service they can afford at the
+    // discount. The earlier `< item.price` check rejected discounted buyers.
+    if ((p.gold || 0) < realPrice) return { error: 'Not enough gold.' };
+    p.gold -= realPrice;
+    // Stash realPrice on the pending entry so a cancelService refund returns
+    // the correct amount (was originally `item.price` — would have over-refunded
+    // Black Market buyers).
+    room.pendingServices[playerId] = { itemId: item.id, price: realPrice };
+    log(room, `${p.name} bought ${item.name} (-${realPrice}g) — pick a target.`);
     return { ok: true, pendingService: item.id };
   }
   return { error: 'Unknown item type.' };
@@ -1902,8 +2088,11 @@ function applyService(room, playerId, target) {
     const r = (target.rank || '').toUpperCase();
     if (!['A', 'K', 'Q', '10'].includes(r)) return { error: 'Pick a rank: A, K, Q, or 10.' };
     if ((p.runDeck || []).length >= 24) return refund('Run deck is at the cap (24).');
-    const newId = 'p' + room.players.indexOf(p) + '_eng_' + r + '_' + Date.now() + '_' + Math.floor(Math.random()*1000);
-    p.runDeck.push({ rank: r, id: newId, owner: room.players.indexOf(p), affix: null });
+    // Use the cryptographically random helper (newId) instead of Date.now()
+    // so back-to-back engraves can't collide. Local var renamed to avoid
+    // shadowing the helper.
+    const cardId = 'p' + room.players.indexOf(p) + '_eng_' + r + '_' + newId();
+    p.runDeck.push({ rank: r, id: cardId, owner: room.players.indexOf(p), affix: null });
     return finalize(`engraved a new vanilla ${r} into their run deck (size ${p.runDeck.length}).`);
   }
 
@@ -2014,6 +2203,8 @@ function removePlayer(room, playerId) {
   const idx = room.players.findIndex(p => p.id === playerId);
   if (idx === -1) return false;
   const wasHost = room.hostId === playerId;
+  const wasChallenger = room.challengeOpen && room.challengerIdx === idx;
+  const wasCurrentTurn = room.currentTurnIdx === idx;
   const removed = room.players[idx];
   room.players.splice(idx, 1);
   if (room.players.length === 0) {
@@ -2025,9 +2216,53 @@ function removePlayer(room, playerId) {
     room.hostId = nh.id;
   }
   log(room, `${removed.name} left.`);
-  // Adjust current turn if needed
+  // Re-fix any indices that referenced seats AFTER the splice point. All
+  // earlier code stored seat indices (currentTurnIdx, challengerIdx,
+  // placements, lastPlay.playerIdx, etc.); when we removed seat `idx`,
+  // anything > idx slides down by 1 and anything === idx is now invalid.
   if (room.runStarted) {
+    // currentTurnIdx
+    if (room.currentTurnIdx > idx) room.currentTurnIdx -= 1;
+    else if (wasCurrentTurn) room.currentTurnIdx = idx % room.players.length;
     if (room.currentTurnIdx >= room.players.length) room.currentTurnIdx = 0;
+    // placements (1st/2nd-place finishers' seat indices)
+    if (Array.isArray(room.placements)) {
+      room.placements = room.placements
+        .filter(p => p !== idx)
+        .map(p => (p > idx ? p - 1 : p));
+    }
+    // echoArmedFor — armed-seat reference
+    if (typeof room.echoArmedFor === 'number') {
+      if (room.echoArmedFor === idx) room.echoArmedFor = -1;
+      else if (room.echoArmedFor > idx) room.echoArmedFor -= 1;
+    }
+    // nextRoundLeaderIdx
+    if (typeof room.nextRoundLeaderIdx === 'number') {
+      if (room.nextRoundLeaderIdx === idx) room.nextRoundLeaderIdx = null;
+      else if (room.nextRoundLeaderIdx > idx) room.nextRoundLeaderIdx -= 1;
+    }
+    // lastPlay
+    if (room.lastPlay) {
+      if (room.lastPlay.playerIdx === idx) room.lastPlay = null;
+      else if (room.lastPlay.playerIdx > idx) room.lastPlay.playerIdx -= 1;
+    }
+    // Challenge window: if the leaving player WAS the challenger, the
+    // window is dead — pass-no-challenge it cleanly so play doesn't stall.
+    // Otherwise, just shift the index down if needed.
+    if (room.challengeOpen) {
+      if (wasChallenger) {
+        if (room.challengeTimer) { clearTimeout(room.challengeTimer); room.challengeTimer = null; }
+        room.challengeOpen = false;
+        room.challengerIdx = -1;
+        room.challengeDeadline = null;
+        if (activeCount(room) > 1) {
+          // Use the no-challenge fall-through to advance the turn cleanly.
+          handlePassNoChallengeInternal(room);
+        }
+      } else if (room.challengerIdx > idx) {
+        room.challengerIdx -= 1;
+      }
+    }
     if (activeCount(room) <= 1) {
       // Force round end
       endRoundIfDone(room);
@@ -2069,8 +2304,41 @@ function applyJackFairness(room) {
   }
 }
 
-// Jack-curse elimination — too many Jacks in hand eliminates the player from
-// the round. Vengeful Spirit drags the next active player down too.
+// Apply a -N shards penalty cascading into hearts when shards underflow.
+// Used by Vengeful Spirit. Shards fill up to HEART_SHARDS_REQUIRED (3) per
+// heart, so -2 from a player at full life (3 hearts, 0 shards) leaves them
+// at "2 hearts + 1 shard" — i.e. 2 1/3 hearts. If shards go negative we
+// pull from a heart (-1 heart, refill shards by HEART_SHARDS_REQUIRED).
+// Caps at 0 hearts (can still mark eliminated downstream).
+function applyShardPenalty(room, victim, n) {
+  if (!victim || n <= 0) return;
+  victim.heartShards = victim.heartShards || 0;
+  let shards = victim.heartShards - n;
+  while (shards < 0 && victim.hearts > 0) {
+    victim.hearts -= 1;
+    shards += HEART_SHARDS_REQUIRED;
+    log(room, `${victim.name} loses a Heart from Vengeful Spirit (now ♥${victim.hearts} + ${shards} shard${shards === 1 ? '' : 's'}).`);
+  }
+  if (shards < 0) shards = 0;
+  victim.heartShards = shards;
+  if (victim.hearts <= 0) {
+    victim.hearts = 0;
+    if (!victim.eliminated) {
+      victim.eliminated = true;
+      log(room, `${victim.name} ran out of Hearts and is eliminated.`);
+    }
+  }
+}
+
+// Jack-curse elimination — too many Jacks in hand eliminates the player
+// from the ROUND.
+//
+// Vengeful Spirit (Legendary joker): when YOU are eliminated by the curse,
+// the next active player loses 2 heart-shards (cascading into a heart loss
+// when shards underflow). This replaces an earlier "drag them into the
+// round-elimination" effect, which was much stronger than the design
+// intent. Shard-bleed is a long-term punishment that scales with how the
+// run has gone — a low-shard victim feels it immediately.
 function checkJackCurse(room) {
   let any = false;
   for (let i = 0; i < room.players.length; i++) {
@@ -2087,9 +2355,9 @@ function checkJackCurse(room) {
         for (let n = 1; n < room.players.length; n++) {
           const ni = (i + n) % room.players.length;
           const np = room.players[ni];
-          if (!np || np.eliminated || np.finishedThisRound) continue;
-          np.eliminated = true;
-          log(room, `${np.name} - Vengeful Spirit pulls them down too.`);
+          if (!np || np.eliminated) continue; // can hit a finished player
+          log(room, `${np.name} - Vengeful Spirit: -2 shards.`);
+          applyShardPenalty(room, np, 2);
           break;
         }
       }
@@ -2145,15 +2413,21 @@ function useConsumable(room, playerId, itemId, options) {
   if (itemId === 'counterfeit') {
     if (idx !== room.currentTurnIdx) return { error: 'Use Counterfeit on your turn.' };
     if (room.counterfeitUsedRound[playerId]) return { error: 'Already used this round.' };
+    if (room.targetLockedUntilLiar) {
+      return { error: 'Target rank is locked until the next LIAR resolution.' };
+    }
     const newRank = options.newRank;
     if (!RANKS_PLAYABLE.includes(newRank)) return { error: 'Invalid target rank.' };
     if (newRank === room.targetRank) return { error: 'Target is already that rank.' };
     p.inventory[itemId]--;
     room.counterfeitUsedRound[playerId] = true;
-    room.counterfeitLockedRanks[playerId] = true;
+    // Single room-level lock flag — blocks Loaded Die / future Counterfeits
+    // until the next LIAR resolution clears it. (counterfeitLockedRanks dict
+    // was set but never read; we replaced it with this flag.)
+    room.targetLockedUntilLiar = true;
     const oldRank = room.targetRank;
     room.targetRank = newRank;
-    log(room, `${p.name} used Counterfeit: target ${oldRank} → ${newRank} (locked once).`);
+    log(room, `${p.name} used Counterfeit: target ${oldRank} → ${newRank} (locked until next LIAR).`);
     return { ok: true };
   }
 
@@ -2243,6 +2517,17 @@ function useConsumable(room, playerId, itemId, options) {
     return { ok: true };
   }
 
+  if (itemId === 'luckyCharm') {
+    // No turn restriction — primes the next shop. The "stackable but you
+    // have to USE it to be stackable" rule lives here: we increment a per-
+    // player stack on every use and decrement inventory.
+    p.inventory[itemId]--;
+    room.luckyCharmStacks = room.luckyCharmStacks || {};
+    room.luckyCharmStacks[playerId] = (room.luckyCharmStacks[playerId] || 0) + 1;
+    log(room, `${p.name} used Lucky Charm — next shop is ×${1 + room.luckyCharmStacks[playerId]} on Rare/Legendary/Mythic.`);
+    return { ok: true };
+  }
+
   return { error: 'Consumable not yet wired in PvP.' };
 }
 
@@ -2253,6 +2538,12 @@ function useLoadedDie(room, playerId) {
   if (!playerHasRelic(p, 'loadedDie')) return { error: 'You do not own Loaded Die.' };
   if (room.loadedDieUsedFloor && room.loadedDieUsedFloor[playerId]) return { error: 'Already used this floor.' };
   if (room.phase !== 'round') return { error: 'Round not active.' };
+  // Counterfeit's lock blocks any target-changing effect until the next
+  // LIAR resolves. Without this check, a Counterfeit-locked target could
+  // be flipped right back by a Loaded Die owner.
+  if (room.targetLockedUntilLiar) {
+    return { error: 'Target rank is locked until the next LIAR resolution.' };
+  }
   const candidates = RANKS_PLAYABLE.filter(r => r !== room.targetRank);
   const newRank = candidates[Math.floor(Math.random() * candidates.length)];
   room.targetRank = newRank;
@@ -2267,6 +2558,79 @@ function setWhisperDirection(room, playerId, dir) {
   if (!room.whisperDirection) room.whisperDirection = {};
   if (dir !== 'left' && dir !== 'right') return { error: 'Bad direction.' };
   room.whisperDirection[playerId] = dir;
+  return { ok: true };
+}
+
+// ---------- Doubletalk active (joker) ----------
+// Arms the player's NEXT play to allow 2-4 cards instead of 1-3. Once per
+// round. handlePlay reads room.doubletalkArmed[playerId] and consumes the
+// arm when the player actually plays.
+function useDoubletalk(room, playerId) {
+  const p = findPlayerById(room, playerId);
+  if (!p) return { error: 'Not in room.' };
+  if (!playerHasJoker(p, 'doubletalk')) return { error: 'You do not have Doubletalk.' };
+  if (room.phase !== 'round') return { error: 'Round not active.' };
+  const idx = room.players.indexOf(p);
+  if (idx !== room.currentTurnIdx) return { error: 'Use Doubletalk on your turn.' };
+  if (room.challengeOpen) return { error: 'Cannot arm during a challenge.' };
+  if (room.doubletalkUsedRound && room.doubletalkUsedRound[playerId]) {
+    return { error: 'Doubletalk already used this round.' };
+  }
+  if (room.doubletalkArmed && room.doubletalkArmed[playerId]) {
+    return { error: 'Doubletalk is already armed — play 2–4 cards now.' };
+  }
+  room.doubletalkArmed = room.doubletalkArmed || {};
+  room.doubletalkUsedRound = room.doubletalkUsedRound || {};
+  room.doubletalkArmed[playerId] = true;
+  room.doubletalkUsedRound[playerId] = true;
+  log(room, `${p.name} - Doubletalk armed: next play is 2–4 cards.`);
+  return { ok: true };
+}
+
+// ---------- Sleight of Hand active (joker) ----------
+// Once per round on your turn: draw 1 card from the top of the draw pile.
+function useSleightOfHand(room, playerId) {
+  const p = findPlayerById(room, playerId);
+  if (!p) return { error: 'Not in room.' };
+  if (!playerHasJoker(p, 'sleightOfHand')) return { error: 'You do not have Sleight of Hand.' };
+  if (room.phase !== 'round') return { error: 'Round not active.' };
+  const idx = room.players.indexOf(p);
+  if (idx !== room.currentTurnIdx) return { error: 'Use Sleight of Hand on your turn.' };
+  if (room.challengeOpen) return { error: 'Cannot use during a challenge.' };
+  if (room.sleightUsedRound && room.sleightUsedRound[playerId]) {
+    return { error: 'Sleight of Hand already used this round.' };
+  }
+  if (!room.drawPile || room.drawPile.length === 0) return { error: 'Draw pile is empty.' };
+  const drawn = room.drawPile.pop();
+  markCursedOnEntry(drawn);
+  p.hand.push(drawn);
+  room.sleightUsedRound = room.sleightUsedRound || {};
+  room.sleightUsedRound[playerId] = true;
+  log(room, `${p.name} - Sleight of Hand: drew 1 card from the draw pile.`);
+  return { ok: true };
+}
+
+// ---------- The Screamer active (Mythic joker) ----------
+// Once per floor: name a rank in {A, K, Q, 10, J}. For the rest of the
+// round, every card of that rank in any hand is publicly revealed (the
+// per-player snapshot pushes the matching cards into each opponent's
+// `revealedCards` array). The flag clears at the start of the next round.
+function useScreamer(room, playerId, rank) {
+  const p = findPlayerById(room, playerId);
+  if (!p) return { error: 'Not in room.' };
+  if (!playerHasJoker(p, 'screamer')) return { error: 'You do not have The Screamer.' };
+  if (room.phase !== 'round') return { error: 'Round not active.' };
+  const charges = (room.screamerChargesFloor && room.screamerChargesFloor[playerId]) || 0;
+  if (charges <= 0) return { error: 'No Screamer charges left this floor.' };
+  const r = (rank || '').toString().toUpperCase();
+  if (!ALL_RANKS.includes(r)) return { error: 'Pick a rank: A, K, Q, 10, or J.' };
+  if (room.screamerRevealedRank) {
+    return { error: 'A rank is already publicly revealed this round.' };
+  }
+  room.screamerChargesFloor[playerId] = charges - 1;
+  room.screamerRevealedRank = r;
+  room.screamerRevealedBy = playerId;
+  log(room, `${p.name} - The Screamer: every ${r} in every hand is now publicly visible until end of round.`);
   return { ok: true };
 }
 
@@ -2304,6 +2668,12 @@ function adminSkipFloor(room, playerId, floor) {
     room.currentFloorModifier = ids[Math.floor(Math.random() * ids.length)];
   } else {
     room.currentFloorModifier = null;
+  }
+  // Re-seed Auditor's N if jumping into Floor 3, else clear.
+  if (room.currentBoss && room.currentBoss.id === 'auditor') {
+    room.auditorEveryN = 2 + Math.floor(Math.random() * 3);
+  } else {
+    room.auditorEveryN = null;
   }
   log(room, `Admin: skipped to Floor ${n}.`);
   startRound(room);
@@ -2348,6 +2718,9 @@ module.exports = {
   useTattletale,
   useConsumable,
   useLoadedDie,
+  useDoubletalk,
+  useSleightOfHand,
+  useScreamer,
   setWhisperDirection,
   // Admin
   adminAddGold,

@@ -71,8 +71,8 @@
     banker: {
       id: 'banker', name: 'The Banker',
       flavor: "\"Came in with capital. Every gilded card is just compounding.\"",
-      passive: 'Start with 150g + a Gilded Ace in your run deck.',
-      startingGold: 150,
+      passive: 'Start with 0g and a Gilded Ace in your run deck (the Ace + Taxman start mining gold from turn 1).',
+      startingGold: 0,
       startingGildedA: true,
       // Design doc: starts with The Taxman (extends the "I print money"
       // identity). Was 'surveyor' which is information, not income.
@@ -363,6 +363,11 @@
     methodical: { id: 'methodical', name: 'Methodical', bluffRate: 0.25, challengeRate: 0.20, tell: 're-sorts their hand' },
     mimic:      { id: 'mimic',      name: 'Mimic',      bluffRate: 0.50, challengeRate: 0.30, tell: 'glances at you' },
     wildcard:   { id: 'wildcard',   name: 'Wildcard',   bluffRate: 0.50, challengeRate: 0.40, tell: 'shrugs (might mean anything)' },
+    // The Prophet — adapts to the player's specific patterns over the
+    // run. Tracks bluff rate by play size + Jack-count and challenges
+    // proportionally. Doesn't show a tell (the math IS the tell — and
+    // beating it requires changing your patterns mid-run).
+    prophet:    { id: 'prophet',    name: 'Prophet',    bluffRate: 0.45, challengeRate: 0.45, tell: null },
   };
 
   // Phase 8+: bosses on Floor 3, 6, 9
@@ -371,7 +376,7 @@
   const BOSS_CATALOG = {
     auditor: { id: 'auditor', name: 'The Auditor', floor: 3, bluffRate: 0.30, challengeRate: 1.00, tell: 'snaps the ledger shut', desc: 'Challenges every Nth play (N rolls 1–5 each round).' },
     cheater: { id: 'cheater', name: 'The Cheater', floor: 6, bluffRate: 1.00, challengeRate: 0.30, tell: 'a tiny smirk on 1-in-4 lies', desc: 'Lies on every play.' },
-    lugen:   { id: 'lugen',   name: 'Lugen',       floor: 9, bluffRate: 0.55, challengeRate: 0.50, tell: null, desc: 'Starts with 7 cards, Jack limit 6, every play is randomly affixed. Can call Liar out-of-turn once per round.' },
+    lugen:   { id: 'lugen',   name: 'Lugen',       floor: 9, bluffRate: 0.55, challengeRate: 0.50, tell: null, desc: 'Starts with 7 cards, Jack limit 6, every play is randomly affixed. Can call Liar out-of-turn once per round. Reads YOUR run-long patterns to predict your next bluff.' },
     mirror:  { id: 'mirror',  name: 'The Mirror',  floor: 9, bluffRate: 0.50, challengeRate: 0.50, tell: null, alt: true, desc: 'Plays whatever you played last turn. Disrupt your own pattern to beat it.' },
     hollow:  { id: 'hollow',  name: 'The Hollow',  floor: 9, bluffRate: 0.50, challengeRate: 0.50, tell: null, alt: true, desc: 'Hand size is hidden from you. Pure paranoia.' },
   };
@@ -1013,6 +1018,31 @@
         cursedHeldId: null,
         charlatanStreak: 0,      // Gambler's Hand: 5 wins in a row
         floorStartTimestamp: 0,  // Speed Demon: track current floor start
+      },
+      // Persistent profile of the human player's behavior across the
+      // whole run. Lugen (and the optional 'prophet' personality) read
+      // these to predict the next play / decide whether to challenge.
+      // Beats the older fixed-bluffRate behavior — Lugen actually adapts
+      // to how YOU specifically play.
+      humanProfile: {
+        // Plays bucketed by count (1, 2, 3, 4): { plays, bluffs }
+        playsByCount: { 1: { plays: 0, bluffs: 0 }, 2: { plays: 0, bluffs: 0 }, 3: { plays: 0, bluffs: 0 }, 4: { plays: 0, bluffs: 0 } },
+        // Plays bucketed by Jack count in hand at play time (0..4+):
+        // captures whether you bluff more / less when scared of Jacks.
+        playsByJacks: {},
+        // Challenge opportunities: how often you fired LIAR vs. let it pass.
+        challengeOps: 0,
+        challengesFired: 0,
+        // Sliding window of the last 20 wasBluff flags (true/false). Lets
+        // the bot detect short-term streaks ("you've been honest 5 plays
+        // in a row — next one's probably a bluff").
+        recentBluffs: [],
+        // Average claimed count (helps predict claim size of next play).
+        sumClaimCount: 0,
+        // Plays where you just emptied your hand on the play itself —
+        // those are very-bluff-heavy because you HAVE to win the round.
+        emptyHandPlays: 0,
+        emptyHandPlaysBluff: 0,
       },
     };
 
@@ -1908,11 +1938,13 @@
     return shuffle(deck);
   }
 
-  // Each player's personal deck. 12 cards (3 each of A/K/Q/10) — players
-  // can customize via shop services / rewards / consumables. The ROUND_DECK
-  // cap above keeps any one round balanced, so building stacked decks is
-  // safe and meaningful (you bias what's likely to land in play).
-  const RUN_DECK_PER_RANK = 3;
+  // Each player's personal deck. 8 cards (2 each of A/K/Q/10) per design
+  // doc. Players can customize via shop services / rewards / consumables.
+  // The ROUND_DECK cap above keeps any one round balanced, so building
+  // stacked decks is safe and meaningful (you bias what's likely to land
+  // in play). (Was 3/rank — drifted from design; restored to match the
+  // tuning everything else assumes.)
+  const RUN_DECK_PER_RANK = 2;
 
   function buildInitialRunDeck(playerIdx) {
     const deck = [];
@@ -2219,6 +2251,17 @@
         wasBluff: wasBluff,
       };
       if (wasBluff) state.humanLiesThisRound = (state.humanLiesThisRound || 0) + 1;
+      // Long-term human-behavior profile (used by Lugen / 'prophet' bots).
+      // Records counts/bluffs by play size + Jack-count-at-play, plus a
+      // sliding window of the last N bluff flags. Becameemptyhand flag
+      // captures the high-bluff-rate "I HAD to dump my last cards" play.
+      const _jacksBefore = countJacks(hand) - cards.filter(c => c.rank === 'J').length + cards.filter(c => c.rank === 'J').length;
+      // ^ jacksBefore = count we held just before this play (hand still
+      // includes the played cards at this point). Simplified to countJacks
+      // of original hand:
+      const _jacksAtPlay = countJacks(hand);
+      const _becameEmpty = state.hands[0].length === 0;
+      _recordHumanPlay(cards.length, wasBluff, _jacksAtPlay, _becameEmpty);
       // The Fox achievement: requires every play this round to be a bluff
       // AND the human to survive (not caught). humanPlays = total plays
       // count, foxStreak = consecutive bluffs from start of round.
@@ -2470,6 +2513,10 @@
   }
 
   function handlePassNoChallenge(lastPlayerIdx) {
+    // Predictor: if the HUMAN was the natural challenger and didn't fire
+    // before the timer expired, that's a "pass". Record the missed
+    // opportunity so the bot's challenge-rate model converges accurately.
+    if (state.challengerIdx === 0) _recordHumanChallengeOpp(false);
     state.challengeOpen = false;
     state.challengerIdx = -1;
     clearAllTimers();
@@ -2558,6 +2605,9 @@
     if (challengerIdx === 0 && runState && runState.ach) {
       runState.ach.liarCalls = (runState.ach.liarCalls || 0) + 1;
     }
+    // Predictor: human had a chance to challenge and DID. Track for the
+    // bot's challenge-rate model.
+    if (challengerIdx === 0) _recordHumanChallengeOpp(true);
     state.challengeOpen = false;
     clearAllTimers();
     document.getElementById('betaChallengeBar').classList.add('hidden');
@@ -3042,6 +3092,16 @@
     } else if (persId === 'wildcard') {
       // Genuinely random — re-roll the bluff rate every single play.
       bluffRate = Math.random();
+    } else if (persId === 'lugen' || persId === 'prophet') {
+      // Predictor brain: if the human challenges aggressively, lower our
+      // bluff rate so we feed them more truths and burn their wrong-call
+      // gold/penalty. If they barely ever challenge, ramp our bluffs.
+      // Linear blend with a baseline of 0.45.
+      const challengeRate = predictHumanChallengeRate();
+      // 0% challenge → bluff 0.85, 50% → bluff 0.45, 100% → bluff 0.10.
+      bluffRate = Math.max(0.05, Math.min(0.95, 0.85 - 0.75 * challengeRate));
+      // Lugen still affixes every play randomly later in the function;
+      // the chosen bluff rate just controls the truth/lie ratio.
     }
     // Empty Threat: a single feint cools the next bot's bluff rate.
     if (state.emptyThreatPending) {
@@ -3108,6 +3168,76 @@
     playCards(botIdx, cardsToPlay.map(c => c.id));
   }
 
+  // ============================================================
+  // Human-behavior predictor — heuristic tracker used by Lugen and the
+  // optional 'prophet' personality. Updates after every human action and
+  // exposes simple predictors the bot brain can plug into its decisions.
+  //
+  // Numbers are intentionally heuristic, not Bayesian: roguelike runs are
+  // too short for a posterior to converge, so we lean on hand-tuned
+  // priors with sample-size-weighted blends.
+  // ============================================================
+  function _hp() { return runState && runState.humanProfile; }
+  function _recordHumanPlay(count, wasBluff, jackCountAtPlay, becameEmptyHand) {
+    const hp = _hp();
+    if (!hp) return;
+    const c = Math.max(1, Math.min(4, count | 0));
+    if (!hp.playsByCount[c]) hp.playsByCount[c] = { plays: 0, bluffs: 0 };
+    hp.playsByCount[c].plays += 1;
+    if (wasBluff) hp.playsByCount[c].bluffs += 1;
+    const jk = Math.min(4, Math.max(0, jackCountAtPlay | 0));
+    if (!hp.playsByJacks[jk]) hp.playsByJacks[jk] = { plays: 0, bluffs: 0 };
+    hp.playsByJacks[jk].plays += 1;
+    if (wasBluff) hp.playsByJacks[jk].bluffs += 1;
+    hp.sumClaimCount += c;
+    hp.recentBluffs.push(!!wasBluff);
+    if (hp.recentBluffs.length > 20) hp.recentBluffs.shift();
+    if (becameEmptyHand) {
+      hp.emptyHandPlays += 1;
+      if (wasBluff) hp.emptyHandPlaysBluff += 1;
+    }
+  }
+  function _recordHumanChallengeOpp(fired) {
+    const hp = _hp();
+    if (!hp) return;
+    hp.challengeOps += 1;
+    if (fired) hp.challengesFired += 1;
+  }
+  // Bayesian-ish posterior: blend the observed bluff rate at this count
+  // with a prior of 0.30 weighted by k=6 pseudo-plays. Thin samples lean
+  // on the prior; the posterior converges to truth as the run progresses.
+  function _smoothedBluffRate(plays, bluffs, prior, k) {
+    return (bluffs + prior * k) / Math.max(1, plays + k);
+  }
+  function predictHumanBluffProb(count, jackCountAtPlay) {
+    const hp = _hp();
+    if (!hp) return 0.30;
+    const c = Math.max(1, Math.min(4, count | 0));
+    const byCount = hp.playsByCount[c] || { plays: 0, bluffs: 0 };
+    const baseRate = _smoothedBluffRate(byCount.plays, byCount.bluffs, 0.30, 6);
+    // Layer in the Jack-count signal — when you're sitting on lots of
+    // Jacks you're FORCED to bluff because they don't match the target.
+    const jk = Math.min(4, Math.max(0, jackCountAtPlay | 0));
+    const byJ = hp.playsByJacks[jk] || { plays: 0, bluffs: 0 };
+    const jackRate = _smoothedBluffRate(byJ.plays, byJ.bluffs, baseRate, 4);
+    let combined = (baseRate * 0.6) + (jackRate * 0.4);
+    // Streak adjustment: if your last 5 plays were all truth, slightly
+    // bias toward thinking the next one is a bluff (and vice versa).
+    // Capped at ±0.10 so tiny streaks don't flip the call.
+    const recent = hp.recentBluffs.slice(-5);
+    if (recent.length >= 3) {
+      const recentRate = recent.filter(Boolean).length / recent.length;
+      const drift = (recentRate - 0.5) * 0.20; // 100% truth → -0.10, 100% bluff → +0.10
+      combined = Math.max(0.02, Math.min(0.98, combined + drift));
+    }
+    return combined;
+  }
+  function predictHumanChallengeRate() {
+    const hp = _hp();
+    if (!hp) return 0.30;
+    return _smoothedBluffRate(hp.challengeOps, hp.challengesFired, 0.30, 6);
+  }
+
   function botDecideChallenge(botIdx) {
     if (!state.lastPlay) return false;
     if (hasCursed(botIdx)) return false;  // Phase 5: Cursed blocks Liar
@@ -3126,6 +3256,24 @@
       const fires = (state.auditorChances % N) === 0;
       if (fires) log('[Tell] The Auditor flips its ledger — challenge incoming.');
       return fires;
+    }
+
+    // Lugen and the optional 'prophet' personality use the human-behavior
+    // predictor to call LIAR roughly proportional to predicted bluff prob.
+    // The play we're judging is the HUMAN's last play (lp.playerIdx === 0
+    // would mean human just played; bots only call when human played).
+    if ((persId === 'lugen' || persId === 'prophet') && lp.playerIdx === 0) {
+      const humanJacksAtPlay = (state.hands[0] || []).filter(c => c.rank === 'J').length;
+      // Predict bluff probability with the count + Jack-count signal we
+      // tracked when the play was recorded. Use a small confidence floor
+      // so the bot still ALMOST always engages on triple-card claims.
+      const p = predictHumanBluffProb(lp.count, humanJacksAtPlay);
+      // Convert bluff probability into a challenge probability with a
+      // soft sigmoid. Roughly: bluff 0.10 → challenge 0.05; bluff 0.50 →
+      // 0.55; bluff 0.90 → 0.95. Lugen is greedier than prophet.
+      const aggression = persId === 'lugen' ? 1.10 : 0.85;
+      const challengeP = Math.max(0.02, Math.min(0.98, p * aggression));
+      return Math.random() < challengeP;
     }
 
     let base = lp.count === 3 ? 0.40 : lp.count === 2 ? 0.25 : 0.15;

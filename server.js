@@ -1492,6 +1492,40 @@ io.on('connection', async (socket) => {
     betaMP.broadcast(io, room);
   });
 
+  // Doubletalk joker arm — once per round, your next play allows 2-4 cards
+  socket.on('beta:useDoubletalk', () => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.useDoubletalk(room, player.id);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  // Sleight of Hand joker — once per round, draw 1 card from the draw pile
+  socket.on('beta:useSleightOfHand', () => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.useSleightOfHand(room, player.id);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  // The Screamer (Mythic joker) — once per floor, name a rank and reveal
+  // every matching card in every hand for the rest of the round.
+  socket.on('beta:useScreamer', ({ rank } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.useScreamer(room, player.id, rank);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
   socket.on('beta:adminAddGold', ({ amount } = {}) => {
     const room = betaMP.betaRooms[currentBetaRoomId];
     if (!room) return emitBetaError('Not in a beta room.');

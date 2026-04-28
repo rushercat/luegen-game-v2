@@ -17,7 +17,7 @@
     { id: 'ace',       name: 'The Ace',       startingJoker: 'sleightOfHand', passive: 'Starts with Sleight of Hand.' },
     { id: 'trickster', name: 'The Trickster', startingJoker: 'doubletalk',    passive: 'Starts with Doubletalk.' },
     { id: 'hoarder',   name: 'The Hoarder',   startingJoker: 'slowHand',      passive: 'Hand size +1 (6 cards). Starts with Slow Hand.' },
-    { id: 'banker',    name: 'The Banker',    startingJoker: 'surveyor',      passive: 'Start with 150g + a Gilded Ace. Starts with Surveyor.' },
+    { id: 'banker',    name: 'The Banker',    startingJoker: 'surveyor',      passive: 'Start with 0g and a Gilded Ace. The Ace + Surveyor reads start mining gold and intel from turn 1.' },
     { id: 'bait',      name: 'The Bait',      startingJoker: 'spikedTrap',    passive: 'Round start: peek 1 random card from a random opponent. Starts with Spiked Trap.' },
     { id: 'gambler',   name: 'The Gambler',   startingJoker: 'blackHole',     passive: '+50% gold from all sources. 1 Cursed forced each floor. Starts with Black Hole.' },
     { id: 'sharp',     name: 'The Sharp',     startingJoker: 'tattletale',    passive: 'Challenge window +1 second. Starts with Tattletale.' },
@@ -46,6 +46,7 @@
       Uncommon: 'bg-emerald-700 text-emerald-100',
       Rare: 'bg-blue-700 text-blue-100',
       Legendary: 'bg-amber-700 text-amber-100',
+      Mythic: 'bg-rose-700 text-rose-100',
     };
     const rarityTone = jokerInfo ? (RARITY_TONE[jokerInfo.rarity] || 'bg-gray-700 text-gray-100') : '';
     const jokerSection = jokerInfo
@@ -417,6 +418,49 @@
       ldBtn.disabled = !!used;
       ldBtn.textContent = used ? 'Loaded Die (used)' : 'Loaded Die';
     }
+    // Doubletalk arm — visible only when the joker is held; disabled if
+    // already used this round, already armed, not your turn, or a challenge
+    // is open. Server enforces all of these too; UI mirrors so the player
+    // sees why the button is unavailable.
+    const dtBtn = document.getElementById('betaMpDoubletalkBtn');
+    if (dtBtn) {
+      const hasJoker = !!(s.mine && s.mine.jokers && s.mine.jokers.some(j => j && j.id === 'doubletalk'));
+      dtBtn.classList.toggle('hidden', !hasJoker);
+      const myIdx = s.players.findIndex(p => p.id === myPlayerId);
+      const myTurn = myIdx === s.currentTurnIdx && !s.challengeOpen;
+      const used = !!(s.mine && s.mine.doubletalkUsedRound);
+      const armed = !!(s.mine && s.mine.doubletalkArmed);
+      dtBtn.disabled = used || armed || !myTurn;
+      dtBtn.innerHTML = used  ? '💬 Doubletalk (used)'
+                       : armed ? '💬 Doubletalk armed'
+                       : '💬 Doubletalk';
+    }
+    // Sleight of Hand active — once per round, draw 1 card.
+    const slBtn = document.getElementById('betaMpSleightBtn');
+    if (slBtn) {
+      const hasJoker = !!(s.mine && s.mine.jokers && s.mine.jokers.some(j => j && j.id === 'sleightOfHand'));
+      slBtn.classList.toggle('hidden', !hasJoker);
+      const myIdx = s.players.findIndex(p => p.id === myPlayerId);
+      const myTurn = myIdx === s.currentTurnIdx && !s.challengeOpen;
+      const used = !!(s.mine && s.mine.sleightUsedRound);
+      const drawEmpty = (s.drawSize || 0) === 0;
+      slBtn.disabled = used || !myTurn || drawEmpty;
+      slBtn.innerHTML = used ? '🤙 Sleight (used)' : '🤙 Sleight of Hand';
+    }
+    // The Screamer (Mythic active) — once per floor, name a rank for a
+    // round-long public reveal. Prompt-based picker; also exposed as
+    // window.lugenUseScreamer('K') for power users / streamers.
+    const scrBtn = document.getElementById('betaMpScreamerBtn');
+    if (scrBtn) {
+      const hasJoker = !!(s.mine && s.mine.jokers && s.mine.jokers.some(j => j && j.id === 'screamer'));
+      scrBtn.classList.toggle('hidden', !hasJoker);
+      const charges = (s.mine && s.mine.screamerCharges) || 0;
+      const alreadyOnRound = !!s.screamerRevealedRank;
+      scrBtn.disabled = charges <= 0 || alreadyOnRound;
+      scrBtn.innerHTML = alreadyOnRound
+        ? '📢 Screamer (' + s.screamerRevealedRank + ' revealed)'
+        : '📢 Screamer (' + charges + ')';
+    }
     // Consumable inventory
     const consDiv = document.getElementById('betaMpConsumables');
     if (consDiv) {
@@ -428,7 +472,7 @@
       } else {
         for (const id of ids) {
           const btn = document.createElement('button');
-          const labels = { smokeBomb: '&#128168; Smoke Bomb', counterfeit: '&#128276; Counterfeit', jackBeNimble: '&#127183; Jack-be-Nimble', tracer: '&#128270; Tracer', devilsBargain: "&#128520; Devil's Bargain", magnet: '&#129516; Magnet' };
+          const labels = { smokeBomb: '&#128168; Smoke Bomb', counterfeit: '&#128276; Counterfeit', jackBeNimble: '&#127183; Jack-be-Nimble', tracer: '&#128270; Tracer', devilsBargain: "&#128520; Devil's Bargain", magnet: '&#129516; Magnet', luckyCharm: '&#127808; Lucky Charm' };
           btn.className = 'bg-amber-700 hover:bg-amber-600 transition px-2 py-1 rounded text-xs font-bold';
           btn.innerHTML = (labels[id] || id) + ' (' + inv[id] + ')';
           btn.addEventListener('click', () => useConsumable(id));
@@ -712,15 +756,10 @@
         socket.emit('beta:applyCleanse', { target: { runDeckCardId: c.id, action: 'strip' } });
       });
       wrap.appendChild(stripBtn);
-      if (c.affix === 'cursed') {
-        const rmBtn = document.createElement('button');
-        rmBtn.className = 'text-xs px-2 py-0.5 rounded bg-rose-700 hover:bg-rose-600';
-        rmBtn.textContent = 'Remove Cursed';
-        rmBtn.addEventListener('click', () => {
-          socket.emit('beta:applyCleanse', { target: { runDeckCardId: c.id, action: 'removeCursed' } });
-        });
-        wrap.appendChild(rmBtn);
-      }
+      // (Removed: a separate "Remove Cursed" button. Stripping the Cursed
+      // affix is functionally identical for this purpose — the card stays
+      // in the deck but no longer threatens you. The dedicated remove-card
+      // path was only reachable for RANDOM.EXE.)
       list.appendChild(wrap);
     }
   }
@@ -1020,6 +1059,15 @@
       if (isChallenger) cls += ' ring-2 ring-rose-400';
       if (p.eliminated) cls += ' opacity-50';
       card.className = cls;
+      // Screamer reveal: render the count of matching cards (or "—" if none)
+      // for whichever rank The Screamer named this round. Public to everyone.
+      const screamRank = s.screamerRevealedRank;
+      const revealedCount = (screamRank && Array.isArray(p.revealedCards))
+        ? p.revealedCards.length : 0;
+      const screamLine = screamRank
+        ? '<div class="text-xs text-rose-300 mt-1">📢 ' + escapeHtml(screamRank) +
+            ' &times; ' + revealedCount + (revealedCount === 0 ? ' (none)' : '') + '</div>'
+        : '';
       card.innerHTML =
         '<div class="font-bold">' + escapeHtml(p.name) + (isMe ? ' (you)' : '') + '</div>' +
         '<div class="text-xs text-emerald-200">' + escapeHtml(p.characterName || '?') + '</div>' +
@@ -1028,7 +1076,8 @@
           '<span class="text-yellow-300">' + p.gold + 'g</span> · ' +
           '<span class="text-cyan-300">' + p.handCount + ' cards</span>' +
         '</div>' +
-        '<div class="text-xs text-white/60">Round wins: ' + p.roundsWon + '</div>';
+        '<div class="text-xs text-white/60">Round wins: ' + p.roundsWon + '</div>' +
+        screamLine;
       playersEl.appendChild(card);
     }
 
@@ -1054,10 +1103,15 @@
         btn.innerHTML = escapeHtml(c.rank) +
           (cursedLocked ? '<span class="absolute -top-1 -right-1 bg-purple-700 text-white text-xs px-1 rounded-full">' + c.cursedTurnsLeft + '</span>' : '');
         if (c.affix) btn.title = 'Affix: ' + c.affix + (cursedLocked ? ' (locked ' + c.cursedTurnsLeft + ' turn' + (c.cursedTurnsLeft === 1 ? '' : 's') + ')' : '');
+        // Doubletalk armed expands the per-play range from 1-3 → 2-4. The
+        // selection cap mirrors that. Server enforces but UI matches so the
+        // player can actually pick a 4th card.
+        const dtArmed = !!(s.mine && s.mine.doubletalkArmed);
+        const maxSelect = dtArmed ? 4 : 3;
         if (myTurn && !cursedLocked) {
           btn.addEventListener('click', () => {
             if (selected.has(c.id)) selected.delete(c.id);
-            else if (selected.size < 3) selected.add(c.id);
+            else if (selected.size < maxSelect) selected.add(c.id);
             renderGame();
           });
         }
@@ -1071,12 +1125,15 @@
     const myTurn = myIdx === s.currentTurnIdx && !s.challengeOpen &&
                    me && !me.eliminated && !me.finishedThisRound;
     const myCall = s.challengeOpen && myIdx === s.challengerIdx;
+    const dtArmed = !!(s.mine && s.mine.doubletalkArmed);
 
     const playBtn = document.getElementById('betaMpPlayBtn');
     const passBtn = document.getElementById('betaMpPassBtn');
     const liarBtn = document.getElementById('betaMpLiarBtn');
     if (playBtn) {
-      playBtn.disabled = !myTurn || selected.size === 0 || selected.size > 3;
+      const minSel = dtArmed ? 2 : 1;
+      const maxSel = dtArmed ? 4 : 3;
+      playBtn.disabled = !myTurn || selected.size < minSel || selected.size > maxSel;
       playBtn.textContent = myTurn ? `Play ${selected.size || ''} as ${s.targetRank || '?'}`.trim() : 'Wait...';
     }
     if (passBtn) passBtn.disabled = !myCall;
@@ -1278,6 +1335,25 @@
     // Loaded Die
     const ldBtn = document.getElementById('betaMpLoadedDieBtn');
     if (ldBtn) ldBtn.addEventListener('click', () => socket && socket.emit('beta:useLoadedDie'));
+    // Doubletalk + Sleight of Hand active jokers
+    const dtBtn = document.getElementById('betaMpDoubletalkBtn');
+    if (dtBtn) dtBtn.addEventListener('click', () => socket && socket.emit('beta:useDoubletalk'));
+    const slBtn = document.getElementById('betaMpSleightBtn');
+    if (slBtn) slBtn.addEventListener('click', () => socket && socket.emit('beta:useSleightOfHand'));
+    // The Screamer (Mythic): activate via UI button (prompts for rank) OR
+    // via window.lugenUseScreamer('K') for power-user / streamer flows.
+    function activateScreamer(rankArg) {
+      if (!socket) return;
+      let rank = rankArg;
+      if (!rank) {
+        rank = prompt('Screamer — name a rank to reveal (A, K, Q, 10, J):');
+        if (!rank) return;
+      }
+      socket.emit('beta:useScreamer', { rank: String(rank).toUpperCase() });
+    }
+    const scrBtn = document.getElementById('betaMpScreamerBtn');
+    if (scrBtn) scrBtn.addEventListener('click', () => activateScreamer());
+    try { window.lugenUseScreamer = activateScreamer; } catch (e) {}
 
     // Admin cheat buttons (host-only — server enforces)
     const admGoldBtn = document.getElementById('betaMpAdmGoldBtn');
