@@ -33,6 +33,49 @@ function bearerToken(req) {
   return h.startsWith('Bearer ') ? h.slice(7) : '';
 }
 
+// Per-IP rate limiter for sensitive auth endpoints. Done in-process (no
+// dependency) — fine for a single-node game server. If you ever scale to
+// multiple nodes behind a load balancer, swap this for express-rate-limit
+// backed by Redis. Window is rolling: count attempts in the last `windowMs`,
+// reject if it exceeds `max`.
+function makeIpLimiter(windowMs, max, label) {
+  const buckets = new Map(); // ip -> array of timestamps
+  // Periodic GC so a long-running process doesn't accumulate every IP ever.
+  setInterval(() => {
+    const cutoff = Date.now() - windowMs;
+    for (const [ip, arr] of buckets) {
+      const fresh = arr.filter(ts => ts >= cutoff);
+      if (fresh.length === 0) buckets.delete(ip);
+      else buckets.set(ip, fresh);
+    }
+  }, Math.max(60_000, windowMs)).unref?.();
+  return (req, res, next) => {
+    // Trust the leftmost X-Forwarded-For if the server is behind a proxy.
+    const fwd = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim();
+    const ip = fwd || req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const arr = (buckets.get(ip) || []).filter(ts => ts >= cutoff);
+    if (arr.length >= max) {
+      const retryAfterSec = Math.ceil((arr[0] + windowMs - now) / 1000);
+      res.set('Retry-After', String(Math.max(1, retryAfterSec)));
+      return res.status(429).json({
+        error: `Too many ${label} attempts — try again in ${retryAfterSec}s.`
+      });
+    }
+    arr.push(now);
+    buckets.set(ip, arr);
+    next();
+  };
+}
+
+// 5 attempts / minute / IP for login (mitigates password brute force).
+const loginLimiter = makeIpLimiter(60 * 1000, 5, 'login');
+// 10 attempts / hour / IP for signup (mitigates spam account creation).
+const signupLimiter = makeIpLimiter(60 * 60 * 1000, 10, 'signup');
+// 20 / minute for OAuth link — Google sign-in flow can stutter, be lenient.
+const oauthLimiter = makeIpLimiter(60 * 1000, 20, 'OAuth');
+
 app.get('/api/config', (_req, res) => {
   res.json({
     authEnabled: auth.enabled,
@@ -43,7 +86,7 @@ app.get('/api/config', (_req, res) => {
   });
 });
 
-app.post('/api/signup', async (req, res) => {
+app.post('/api/signup', signupLimiter, async (req, res) => {
   try {
     const { username, password } = req.body || {};
     const user = await auth.signup(username, password);
@@ -54,7 +97,7 @@ app.post('/api/signup', async (req, res) => {
   }
 });
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body || {};
     const user = await auth.login(username, password);
@@ -148,13 +191,21 @@ app.post('/api/beta/run-history', async (req, res) => {
   res.json({ history: next });
 });
 
-app.post('/api/oauth-link', async (req, res) => {
+app.post('/api/oauth-link', oauthLimiter, async (req, res) => {
   try {
     const { supabase_token, username } = req.body || {};
     if (!supabase_token) return res.status(400).json({ error: 'Missing token.' });
     const supaUser = await auth.verifySupabaseUser(supabase_token);
     if (!supaUser) return res.status(401).json({ error: 'Invalid Supabase token.' });
-    const provider = (supaUser.app_metadata && supaUser.app_metadata.provider) || 'oauth';
+    // Whitelist OAuth providers — the previous fallback to 'oauth' meant any
+    // provider with missing app_metadata mapped to the same key, which lets
+    // identities collide across providers.
+    const rawProvider = supaUser.app_metadata && supaUser.app_metadata.provider;
+    const ALLOWED_OAUTH_PROVIDERS = ['google', 'github', 'discord', 'apple'];
+    if (!rawProvider || !ALLOWED_OAUTH_PROVIDERS.includes(rawProvider)) {
+      return res.status(400).json({ error: 'Unsupported OAuth provider.' });
+    }
+    const provider = rawProvider;
     const sub = supaUser.id;
     const email = supaUser.email || null;
     const result = await auth.findOrCreateOAuthUser({ provider, sub, email, username });
@@ -196,6 +247,18 @@ const EMPTY_ROOM_GRACE_MS = 5 * 60 * 1000;
 function newPlayerId() { return crypto.randomBytes(8).toString('hex'); }
 function jokerCard(idx) { return { rank: 'JOKER', suit: '*', id: 'JK' + (idx + 1) }; }
 
+// Mint a fresh, unguessable id on every card. Called right before a deck is
+// dealt out — any id that escapes a player's hand (into the pile, into burn,
+// into a reveal payload) becomes safe to reference because the next deal will
+// generate brand-new ids. Stops a modified client from forging cardIds based
+// on the predictable rank+suit format and replaying ids that left their hand.
+function mintCardIds(cards) {
+  for (const c of cards) {
+    c.id = (c.rank || 'X') + (c.suit || 'X') + '_' + crypto.randomBytes(6).toString('hex');
+  }
+  return cards;
+}
+
 function createDeck() {
   const deck = [];
   for (const r of RANKS) for (const s of SUITS) deck.push({ rank: r, suit: s, id: r + s });
@@ -222,9 +285,12 @@ function buildLiarsBarDeck(numAlive, jokerCountRequest) {
   return { deck: shuffle([...facePool, ...jokerCards]), jokers, total };
 }
 
+// Crypto-grade shuffle. V8's Math.random is xorshift128+ and recoverable
+// from a few outputs, which would let a determined attacker predict deals
+// in a long-running room. crypto.randomInt is uniform over [0, max).
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = crypto.randomInt(0, i + 1);
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
@@ -268,10 +334,20 @@ function applyLeanDeck(deck, cardsToRemove) {
   return deck.filter(c => !idsToRemove.has(c.id));
 }
 
+// 6 chars from a 30-char alphabet ≈ 715M combinations (~29 bits). 5 chars
+// gave ~24M combinations which is brute-forceable in seconds via concurrent
+// joinRoom probes. Crypto-grade picks make the codes unpredictable too.
+// If a collision happens (extraordinarily rare), retry up to a few times.
 function makeRoomId() {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  for (let attempt = 0; attempt < 5; attempt++) {
+    let id = '';
+    for (let i = 0; i < 6; i++) id += chars[crypto.randomInt(0, chars.length)];
+    if (!rooms[id]) return id;
+  }
+  // Absurdly unlikely fallback: 7-char id.
   let id = '';
-  for (let i = 0; i < 5; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 7; i++) id += chars[crypto.randomInt(0, chars.length)];
   return id;
 }
 
@@ -412,29 +488,48 @@ function broadcast(room) {
   }
 }
 
+// Two-pass to avoid the previous "mutate isSkipped while iterating" pattern,
+// which produced surprising side effects when two callers ran in the same
+// tick (e.g. a disconnect handler racing a callLiar). First pass: find the
+// next eligible seat, recording any skipped seats it passes over. Second
+// pass: actually consume the isSkipped flags + log lines we recorded.
 function findNextActiveIdx(room, fromIdx) {
   const n = room.players.length;
+  if (n === 0) return fromIdx;
   let idx = fromIdx;
-  for (let i = 0; i < n + 1; i++) {
+  const skippedSeats = [];
+  let target = -1;
+  for (let i = 0; i < n; i++) {
     idx = (idx + 1 + n) % n;
     const p = room.players[idx];
+    if (!p) continue;
     if (!p.connected) continue;
     if (p.alive === false) continue;
     if (p.hand.length === 0) continue;
-    if (p.isSkipped) {
+    if (p.isSkipped) { skippedSeats.push(idx); continue; }
+    target = idx;
+    break;
+  }
+  // Consume the skip flags exactly once, regardless of whether we found a
+  // target. If everyone was skipped/empty, we still clear their flags so the
+  // next lookup makes progress.
+  for (const sIdx of skippedSeats) {
+    const p = room.players[sIdx];
+    if (p && p.isSkipped) {
       p.isSkipped = false;
       room.log.push(`${p.name} is skipped this turn.`);
-      continue;
     }
-    return idx;
   }
-  return fromIdx;
+  return target >= 0 ? target : fromIdx;
 }
 
 function checkInstantLoss(room) {
   if (room.settings && room.settings.liarsBar) return false;
   for (const p of room.players) {
-    if (p.hand.filter(c => c.rank === 'J').length === 4) {
+    // Use >= 4 instead of === 4 so any future affix or consumable that can
+    // push a player past the limit (e.g. a "force a Jack into target" item)
+    // still triggers the curse rather than silently exceeding it.
+    if (p.hand.filter(c => c.rank === 'J').length >= 4) {
       room.gameOver = true;
       room.losers = [p.id];
       room.winners = room.players.filter(x => x.id !== p.id).map(x => x.id);
@@ -492,9 +587,14 @@ function findPlayerBySocket(room, socketId) {
 
 function scheduleEmptyRoomCleanup(room) {
   if (room.emptyTimer) clearTimeout(room.emptyTimer);
+  // Capture a generation token so a re-created room with the same id (after
+  // delete + new makeRoomId collision) can't be deleted by a stale timer
+  // belonging to the previous incarnation.
+  if (!room.generation) room.generation = crypto.randomBytes(8).toString('hex');
+  const gen = room.generation;
   room.emptyTimer = setTimeout(() => {
     const r = rooms[room.id];
-    if (!r) return;
+    if (!r || r.generation !== gen) return;
     const stillConnected = r.players.some(p => p.connected);
     if (!stillConnected) delete rooms[r.id];
   }, EMPTY_ROOM_GRACE_MS);
@@ -505,7 +605,7 @@ function cancelEmptyRoomCleanup(room) {
 }
 
 function pickRandomTargetRank() {
-  return LIARS_BAR_RANKS[Math.floor(Math.random() * LIARS_BAR_RANKS.length)];
+  return LIARS_BAR_RANKS[crypto.randomInt(0, LIARS_BAR_RANKS.length)];
 }
 
 // ---------- Rotating Target ----------
@@ -523,7 +623,7 @@ function pickRotatedTarget(room) {
     !discarded.has(r)
   );
   if (candidates.length === 0) return null;
-  return candidates[Math.floor(Math.random() * candidates.length)];
+  return candidates[crypto.randomInt(0, candidates.length)];
 }
 
 // Trigger a target rotation: pick a new rank, clear the LIAR window, reset
@@ -551,6 +651,9 @@ function startLiarsBarRound(room) {
   const alive = room.players.filter(p => p.alive !== false);
   const { deck, jokers } = buildLiarsBarDeck(alive.length, room.actualJokerCount);
   room.actualJokerCount = jokers;
+  // Fresh per-deal ids so any card that escaped a previous round's hands can't
+  // be replayed through cardIds spoofing.
+  mintCardIds(deck);
   const hands = dealCards(deck, alive.length);
   alive.forEach((p, i) => { p.hand = hands[i]; p.isSkipped = false; });
   room.players.filter(p => p.alive === false).forEach(p => { p.hand = []; });
@@ -576,7 +679,39 @@ io.on('connection', async (socket) => {
 
   function emitError(message) { socket.emit('errorMsg', { message }); }
 
+  // ---------- Per-socket rate limiter ----------
+  // Token-bucket per event type to defend against a malicious client spamming
+  // playCards / callLiar / chat / discardFourOfKind. Without this, one
+  // misbehaving client can saturate the event loop. Tokens accumulate at
+  // `refillPerSec` per second, capped at `capacity`.
+  const _rl = Object.create(null);
+  function _rlConfig(eventName) {
+    switch (eventName) {
+      case 'chat':              return { capacity: 5,  refillPerSec: 1 };     // 5/5s steady
+      case 'callLiar':          return { capacity: 3,  refillPerSec: 0.6 };   // 3/5s steady
+      case 'playCards':         return { capacity: 5,  refillPerSec: 0.5 };   // 5/10s steady
+      case 'setTargetAndPlay':  return { capacity: 5,  refillPerSec: 0.5 };
+      case 'discardFourOfKind': return { capacity: 3,  refillPerSec: 0.5 };
+      case 'createRoom':        return { capacity: 3,  refillPerSec: 0.1 };   // 3 then 1/10s
+      case 'joinRoom':          return { capacity: 8,  refillPerSec: 0.5 };   // brute-force pad
+      default:                  return { capacity: 10, refillPerSec: 5 };
+    }
+  }
+  function rateLimit(eventName) {
+    const cfg = _rlConfig(eventName);
+    const now = Date.now();
+    let b = _rl[eventName];
+    if (!b) { b = { tokens: cfg.capacity, ts: now }; _rl[eventName] = b; }
+    const elapsedSec = (now - b.ts) / 1000;
+    b.tokens = Math.min(cfg.capacity, b.tokens + elapsedSec * cfg.refillPerSec);
+    b.ts = now;
+    if (b.tokens < 1) return false;
+    b.tokens -= 1;
+    return true;
+  }
+
   socket.on('createRoom', ({ name }) => {
+    if (!rateLimit('createRoom')) return emitError('Slow down — too many room creations.');
     const roomId = makeRoomId();
     const room = newRoom(roomId);
     rooms[roomId] = room;
@@ -588,6 +723,7 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('joinRoom', ({ roomId, name }) => {
+    if (!rateLimit('joinRoom')) return emitError('Too many join attempts — slow down.');
     const room = rooms[(roomId || '').toUpperCase()];
     if (!room) return emitError('Room not found.');
     if (room.started) return emitError('Game already started.');
@@ -693,12 +829,12 @@ io.on('connection', async (socket) => {
     clearPile(room);
 
     let jokerRequest;
-    if (room.settings.jokerRandom) jokerRequest = Math.floor(Math.random() * (JOKER_RANDOM_MAX + 1));
+    if (room.settings.jokerRandom) jokerRequest = crypto.randomInt(0, JOKER_RANDOM_MAX + 1);
     else                            jokerRequest = room.settings.jokerCount | 0;
     room.actualJokerCount = jokerRequest;
 
     if (room.settings.wildSuit === 'random') {
-      room.actualWildSuit = SUITS[Math.floor(Math.random() * SUITS.length)];
+      room.actualWildSuit = SUITS[crypto.randomInt(0, SUITS.length)];
     } else if (SUITS.includes(room.settings.wildSuit)) {
       room.actualWildSuit = room.settings.wildSuit;
     } else {
@@ -716,6 +852,9 @@ io.on('connection', async (socket) => {
         deck = applyLeanDeck(deck, safeCount);
       }
       deck = shuffle(deck);
+      // Fresh per-deal ids: see mintCardIds. Done after shuffle/lean so every
+      // card that ends up in a hand or in the seeded pile gets a fresh id.
+      mintCardIds(deck);
       const pileSeed = Math.min(room.settings.pileStart | 0, Math.max(0, deck.length - room.players.length));
       const initialPile = pileSeed > 0 ? deck.splice(0, pileSeed) : [];
       const hands = dealCards(deck, room.players.length);
@@ -735,6 +874,7 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('setTargetAndPlay', ({ targetRank, cardIds }) => {
+    if (!rateLimit('setTargetAndPlay')) return emitError('Too fast — slow down.');
     const room = rooms[currentRoomId];
     if (!room || !room.started || room.gameOver) return;
     const me = findPlayerBySocket(room, socket.id);
@@ -754,6 +894,7 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('playCards', ({ cardIds }) => {
+    if (!rateLimit('playCards')) return emitError('Too fast — slow down.');
     const room = rooms[currentRoomId];
     if (!room || !room.started || room.gameOver) return;
     const me = findPlayerBySocket(room, socket.id);
@@ -771,6 +912,10 @@ io.on('connection', async (socket) => {
       return emitError(`Play 1 to ${max} card${max === 1 ? '' : 's'}.`);
     }
     const ids = new Set(cardIds);
+    // Reject duplicate cardIds in the same request — without this, a client
+    // sending ['XYZ','XYZ'] would push the same card object into the pile
+    // twice while only removing it from hand once, effectively cloning it.
+    if (ids.size !== cardIds.length) return emitError('Duplicate card in play.');
     const playedCards = [];
     for (const cid of cardIds) {
       const card = player.hand.find(c => c.id === cid);
@@ -805,92 +950,136 @@ io.on('connection', async (socket) => {
   }
 
   socket.on('callLiar', () => {
+    if (!rateLimit('callLiar')) return emitError('Too many challenges — wait a moment.');
     const room = rooms[currentRoomId];
     if (!room || !room.started || room.gameOver) return;
-    const challenger = findPlayerBySocket(room, socket.id);
-    if (!challenger) return;
-    if (room.canChallengeId !== challenger.id) return emitError('You cannot challenge right now.');
-    if (room.lastPlayedCards.length === 0) return emitError('Nothing to challenge.');
-    const lastPlayer = room.players.find(p => p.id === room.lastPlayerId);
-    const lastCards = room.lastPlayedCards;
-    const wildSuit = room.actualWildSuit;
-    const wasLie = lastCards.some(c =>
-      c.rank !== room.targetRank &&
-      c.rank !== 'JOKER' &&
-      (!wildSuit || c.suit !== wildSuit)
-    );
 
-    io.to(room.id).emit('reveal', {
-      cards: lastCards,
-      claimed: room.targetRank,
-      wasLie,
-      challengerName: challenger.name,
-      lastPlayerName: lastPlayer.name
-    });
-
-    if (room.settings.liarsBar) {
-      const loser = wasLie ? lastPlayer : challenger;
-      const winner = wasLie ? challenger : lastPlayer;
-      const result = pullTrigger(loser);
-      io.to(room.id).emit('gunPull', {
-        playerId: loser.id, playerName: loser.name,
-        died: result.died, chambersBefore: result.chambersBefore,
-        chambersAfter: result.chambersAfter, prob: result.prob
-      });
-      if (wasLie) room.log.push(`${challenger.name} called LIAR - ${lastPlayer.name} was lying.`);
-      else        room.log.push(`${challenger.name} wrongly accused ${lastPlayer.name}.`);
-      if (result.died) {
-        room.log.push(`BANG! ${loser.name}'s gun fired (was 1/${result.chambersBefore}). ${loser.name} is eliminated.`);
-      } else {
-        room.log.push(`*click* ${loser.name} survives (was 1/${result.chambersBefore}; next time 1/${Math.max(1, result.chambersAfter)}).`);
+    // In-flight lock: two near-simultaneous LIAR clicks (network jitter, or a
+    // bot timeout firing in the same tick as a human click) used to both pass
+    // validation and double-mutate the room state — pile distributed twice,
+    // currentTurnIdx advanced twice, clients flickering between conflicting
+    // broadcasts. Set the flag synchronously and clear in finally so a thrown
+    // error during resolution still releases it.
+    if (room.challengeInFlight) return;
+    room.challengeInFlight = true;
+    try {
+      const challenger = findPlayerBySocket(room, socket.id);
+      if (!challenger) return;
+      if (room.canChallengeId !== challenger.id) return emitError('You cannot challenge right now.');
+      if (room.lastPlayedCards.length === 0) return emitError('Nothing to challenge.');
+      const lastPlayer = room.players.find(p => p.id === room.lastPlayerId);
+      // If the playing player disconnected between play and challenge, the
+      // find returns undefined. Without this guard we'd crash on
+      // `lastPlayer.name` below and brick the entire room.
+      if (!lastPlayer) {
+        clearPile(room);
+        room.log.push(`${challenger.name} tried to call LIAR, but the previous player is gone — the pile is cleared.`);
+        broadcast(room);
+        return emitError('The previous player has disconnected — challenge cancelled.');
       }
-      checkLastPlayerStanding(room);
-      if (room.gameOver) { broadcast(room); return; }
-      const starter = winner.alive !== false ? winner : room.players.find(p => p.alive !== false);
-      startLiarsBarRound(room);
-      const startIdx = room.players.findIndex(p => p.id === starter.id);
-      room.currentTurnIdx = startIdx >= 0 ? startIdx : 0;
-      if (room.settings.shuffleSeats) applyShuffleSeatsPreservingStarter(room, starter.id);
-      broadcast(room);
-      return;
-    }
+      const lastCards = room.lastPlayedCards;
+      const wildSuit = room.actualWildSuit;
+      const wasLie = lastCards.some(c =>
+        c.rank !== room.targetRank &&
+        c.rank !== 'JOKER' &&
+        (!wildSuit || c.suit !== wildSuit)
+      );
 
-    let starterId = null;
-    if (wasLie) {
-      const takenCount = room.pile.length;
-      lastPlayer.hand.push(...room.pile);
-      lastPlayer.isSkipped = false;
-      room.log.push(`${challenger.name} called LIAR - ${lastPlayer.name} was lying and takes the pile (${takenCount} cards).`);
-      const challengerIdx = room.players.findIndex(p => p.id === challenger.id);
-      clearPile(room);
-      room.currentTurnIdx = challengerIdx;
-      starterId = challenger.id;
-    } else {
-      const takenCount = room.pile.length;
-      challenger.hand.push(...room.pile);
-      const challengerIdx = room.players.findIndex(p => p.id === challenger.id);
-      clearPile(room);
-      room.currentTurnIdx = findNextActiveIdx(room, challengerIdx);
-      starterId = room.players[room.currentTurnIdx].id;
-      room.log.push(`${challenger.name} falsely accused ${lastPlayer.name}, takes the pile (${takenCount} cards) and is skipped - ${room.players[room.currentTurnIdx].name} starts the new round.`);
+      io.to(room.id).emit('reveal', {
+        cards: lastCards,
+        claimed: room.targetRank,
+        wasLie,
+        challengerName: challenger.name,
+        lastPlayerName: lastPlayer.name
+      });
+
+      if (room.settings.liarsBar) {
+        const loser = wasLie ? lastPlayer : challenger;
+        const winner = wasLie ? challenger : lastPlayer;
+        const result = pullTrigger(loser);
+        io.to(room.id).emit('gunPull', {
+          playerId: loser.id, playerName: loser.name,
+          died: result.died, chambersBefore: result.chambersBefore,
+          chambersAfter: result.chambersAfter, prob: result.prob
+        });
+        if (wasLie) room.log.push(`${challenger.name} called LIAR - ${lastPlayer.name} was lying.`);
+        else        room.log.push(`${challenger.name} wrongly accused ${lastPlayer.name}.`);
+        if (result.died) {
+          room.log.push(`BANG! ${loser.name}'s gun fired (was 1/${result.chambersBefore}). ${loser.name} is eliminated.`);
+        } else {
+          room.log.push(`*click* ${loser.name} survives (was 1/${result.chambersBefore}; next time 1/${Math.max(1, result.chambersAfter)}).`);
+        }
+        checkLastPlayerStanding(room);
+        if (room.gameOver) { broadcast(room); return; }
+        // Pick the next-round starter only from players who are both alive and
+        // still connected. Falling back to a disconnected ghost would leave
+        // the round waiting forever.
+        const isLive = (p) => p && p.alive !== false && p.connected !== false;
+        let starter = isLive(winner) ? winner : null;
+        if (!starter) starter = room.players.find(isLive);
+        if (!starter) starter = room.players.find(p => p && p.alive !== false);
+        if (!starter) {
+          // No live players left at all — checkLastPlayerStanding should have
+          // ended the game above, but defend against a state we can't recover.
+          broadcast(room);
+          return;
+        }
+        startLiarsBarRound(room);
+        const startIdx = room.players.findIndex(p => p.id === starter.id);
+        room.currentTurnIdx = startIdx >= 0 ? startIdx : 0;
+        if (room.settings.shuffleSeats) applyShuffleSeatsPreservingStarter(room, starter.id);
+        broadcast(room);
+        return;
+      }
+
+      let starterId = null;
+      if (wasLie) {
+        const takenCount = room.pile.length;
+        lastPlayer.hand.push(...room.pile);
+        lastPlayer.isSkipped = false;
+        room.log.push(`${challenger.name} called LIAR - ${lastPlayer.name} was lying and takes the pile (${takenCount} cards).`);
+        const challengerIdx = room.players.findIndex(p => p.id === challenger.id);
+        clearPile(room);
+        room.currentTurnIdx = challengerIdx;
+        starterId = challenger.id;
+      } else {
+        const takenCount = room.pile.length;
+        challenger.hand.push(...room.pile);
+        const challengerIdx = room.players.findIndex(p => p.id === challenger.id);
+        clearPile(room);
+        room.currentTurnIdx = findNextActiveIdx(room, challengerIdx);
+        starterId = room.players[room.currentTurnIdx].id;
+        room.log.push(`${challenger.name} falsely accused ${lastPlayer.name}, takes the pile (${takenCount} cards) and is skipped - ${room.players[room.currentTurnIdx].name} starts the new round.`);
+      }
+      if (room.settings.shuffleSeats && starterId) {
+        applyShuffleSeatsPreservingStarter(room, starterId);
+        room.log.push('Seats reshuffled for the next round.');
+      }
+      if (checkInstantLoss(room)) { broadcast(room); return; }
+      checkLastPlayerStanding(room);
+      broadcast(room);
+    } finally {
+      room.challengeInFlight = false;
     }
-    if (room.settings.shuffleSeats && starterId) {
-      applyShuffleSeatsPreservingStarter(room, starterId);
-      room.log.push('Seats reshuffled for the next round.');
-    }
-    if (checkInstantLoss(room)) { broadcast(room); return; }
-    checkLastPlayerStanding(room);
-    broadcast(room);
   });
 
   function pullTrigger(player) {
-    const before = player.chambers || LIARS_BAR_GUN_CHAMBERS;
+    // Defensive clamp: if some other code path ever leaves chambers in a
+    // non-positive or non-numeric state, normalize before computing
+    // probabilities so we don't divide by zero / NaN.
+    if (typeof player.chambers !== 'number' || !isFinite(player.chambers)) {
+      player.chambers = LIARS_BAR_GUN_CHAMBERS;
+    }
+    const before = Math.max(0, player.chambers || LIARS_BAR_GUN_CHAMBERS);
     if (before <= 0) {
       player.alive = false;
+      player.chambers = 0;
       return { died: true, chambersBefore: before, chambersAfter: 0, prob: 1 };
     }
     const prob = 1 / before;
-    const died = Math.random() < prob;
+    // Use crypto-grade randomness for the bullet roll. Math.random's PRNG is
+    // recoverable from a few outputs; the gun shouldn't be predictable.
+    const died = (crypto.randomInt(0, before) === 0);
     const after = Math.max(0, before - 1);
     player.chambers = after;
     if (died) player.alive = false;
@@ -898,6 +1087,7 @@ io.on('connection', async (socket) => {
   }
 
   socket.on('discardFourOfKind', ({ rank }) => {
+    if (!rateLimit('discardFourOfKind')) return emitError('Too fast — slow down.');
     const room = rooms[currentRoomId];
     if (!room || !room.started || room.gameOver) return;
     if (room.settings.liarsBar) return emitError('Four-of-a-kind discard is disabled in Liar’s Bar mode.');
@@ -1008,13 +1198,18 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('chat', ({ message }) => {
+    if (!rateLimit('chat')) return emitError('Stop spamming chat.');
     const room = rooms[currentRoomId];
     if (!room) return;
     const player = findPlayerBySocket(room, socket.id);
     if (!player) return;
-    const msg = String(message || '').slice(0, 200);
+    const raw = String(message || '');
+    const msg = raw.slice(0, 200);
     if (!msg.trim()) return;
     io.to(room.id).emit('chat', { name: player.name, message: msg });
+    // If we truncated, tell the sender so they don't think the full message
+    // went out. Avoids the silent-truncation footgun flagged in the review.
+    if (raw.length > 200) emitError('Your chat message was truncated to 200 characters.');
   });
 
   socket.on('leaveRoom', () => {

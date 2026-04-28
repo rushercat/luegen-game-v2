@@ -62,7 +62,9 @@
       passive: 'Hand size +1 (6 cards). Jack limit 5.',
       handSizeBonus: 1,
       jackLimitBonus: 1,
-      startingJoker: 'slowHand',
+      // Design doc: starts with Safety Net (extends the "I can hold more"
+      // identity). Was 'slowHand' which is a different fantasy.
+      startingJoker: 'safetyNet',
       unlockAtFloor: 4,
       unlockHint: 'Reach Floor 4 in any run.',
     },
@@ -72,7 +74,9 @@
       passive: 'Start with 150g + a Gilded Ace in your run deck.',
       startingGold: 150,
       startingGildedA: true,
-      startingJoker: 'surveyor',
+      // Design doc: starts with The Taxman (extends the "I print money"
+      // identity). Was 'surveyor' which is information, not income.
+      startingJoker: 'taxman',
       unlockAtFloor: 6,
       unlockHint: 'Reach Floor 6 in any run.',
     },
@@ -123,6 +127,20 @@
       startingJoker: null,
       unlockAtFloor: 7,
       unlockHint: 'Reach Floor 7 in any run.',
+    },
+    // Design doc — was missing entirely from CHARACTER_CATALOG. The
+    // whisperPeek flag is read at round start (see startRound) and triggers
+    // a directional peek picker: choose left or right neighbour, see one
+    // random card from their starting hand. Distinct from Bait, which peeks
+    // a random opponent automatically.
+    whisper: {
+      id: 'whisper', name: 'The Whisper',
+      flavor: "\"Half a word from the right neighbour is worth a hand of cards.\"",
+      passive: 'Round start: choose a neighbour (left/right) and see one random card from their hand.',
+      whisperPeek: true,
+      startingJoker: 'eavesdropper',
+      unlockAtFloor: 9,
+      unlockHint: 'Reach Floor 9 in any run.',
     },
   };
 
@@ -460,8 +478,12 @@
     {
       id: 'counterfeit',
       name: 'Counterfeit',
-      price: 35,
-      desc: 'Change the target rank now AND lock it through the next Liar call (target survives one rotation). Once per round.',
+      // Bumped from 35g to 50g and gated to once-per-floor (was once-per-round)
+      // to match the design doc. Cheaper-and-faster turned this into a reflex
+      // button; floor-locked makes it a real timing decision.
+      price: 50,
+      floorLocked: true,
+      desc: 'Change the target rank now AND lock it through the next Liar call (target survives one rotation). Once per floor.',
       enabled: true,
     },
     {
@@ -612,7 +634,7 @@
       run: () => {
         // Pick a random consumable id from inventory-trackable ids.
         const POOL = ['whisperNetwork', 'luckyCoin', 'snakeEyes', 'distillation', 'deadDrop', 'jokersMask', 'mirrorShard', 'smokeBomb', 'counterfeit', 'jackBeNimble'];
-        const PRICES = { whisperNetwork: 30, luckyCoin: 20, snakeEyes: 45, distillation: 60, deadDrop: 70, jokersMask: 75, mirrorShard: 45, smokeBomb: 35, counterfeit: 35, jackBeNimble: 90 };
+        const PRICES = { whisperNetwork: 30, luckyCoin: 20, snakeEyes: 45, distillation: 60, deadDrop: 70, jokersMask: 75, mirrorShard: 45, smokeBomb: 35, counterfeit: 50, jackBeNimble: 90 };
         const NAMES = { whisperNetwork: 'Whisper Network', luckyCoin: 'Lucky Coin', snakeEyes: 'Snake Eyes', distillation: 'Distillation', deadDrop: 'Dead Drop', jokersMask: "Joker's Mask", mirrorShard: 'Mirror Shard', smokeBomb: 'Smoke Bomb', counterfeit: 'Counterfeit', jackBeNimble: 'Jack-be-Nimble' };
         const pickId = POOL[Math.floor(Math.random() * POOL.length)];
         const price = Math.floor(PRICES[pickId] * 0.60);
@@ -1178,6 +1200,23 @@
         const target = others[Math.floor(Math.random() * others.length)];
         const card = state.hands[target][Math.floor(Math.random() * state.hands[target].length)];
         privatePeek("Bait's eye: " + playerLabel(target) + ' has a ' + card.rank +
+            (card.affix ? ' (' + card.affix + ')' : '') + '.');
+      }
+    }
+
+    // Whisper peek — directional. The human chooses a direction (left = next
+    // player, right = previous player) which is stored on runState. Default
+    // is 'left' (the next player to act); the player can flip it from the
+    // run sidebar before each round. See toggleWhisperDirection() below.
+    if (runState && runState.character && runState.character.whisperPeek) {
+      if (!runState.whisperDirection) runState.whisperDirection = 'left';
+      // Human is seat 0 in solo mode. Left = +1 (next), right = -1 (prev).
+      const offset = runState.whisperDirection === 'right' ? -1 : 1;
+      const target = ((0 + offset) % NUM_PLAYERS + NUM_PLAYERS) % NUM_PLAYERS;
+      if (target !== 0 && state.hands[target] && state.hands[target].length > 0 && !state.eliminated[target]) {
+        const card = state.hands[target][Math.floor(Math.random() * state.hands[target].length)];
+        const dirLabel = runState.whisperDirection === 'right' ? 'right (prev)' : 'left (next)';
+        privatePeek("Whisper [" + dirLabel + "]: " + playerLabel(target) + ' has a ' + card.rank +
             (card.affix ? ' (' + card.affix + ')' : '') + '.');
       }
     }
@@ -4951,8 +4990,9 @@
         delete item._origPrice;
       }
       const canAfford = runState.gold >= item.price;
-      // Floor-locked items per design: Forger and Jack-be-Nimble (1 / floor).
-      const FLOOR_LOCKED_IDS = ['forger', 'jackBeNimble'];
+      // Floor-locked items per design: Forger, Jack-be-Nimble, and now
+      // Counterfeit (bumped to once-per-floor when its price went 35g -> 50g).
+      const FLOOR_LOCKED_IDS = ['forger', 'jackBeNimble', 'counterfeit'];
       const floorLocked = FLOOR_LOCKED_IDS.includes(item.id) &&
                           runState.floorLockedBoughtThisFloor &&
                           runState.floorLockedBoughtThisFloor[item.id];
@@ -6621,6 +6661,20 @@
     window.lugenRelicCatalog = RELIC_CATALOG;
     window.lugenAffixDetails = AFFIX_DETAILS;
     window.lugenCharacterCatalog = CHARACTER_CATALOG;
+    // Whisper character toggle. Until a dedicated button is wired into the
+    // run sidebar, players can flip the peek direction from the dev console
+    // (`lugenToggleWhisper()`). The next round's start-of-round peek uses
+    // the current setting. Default direction is 'left' (next player).
+    window.lugenToggleWhisper = () => {
+      if (!runState || !runState.character || !runState.character.whisperPeek) {
+        console.log('[Whisper] Active character is not The Whisper.');
+        return null;
+      }
+      runState.whisperDirection = runState.whisperDirection === 'right' ? 'left' : 'right';
+      const label = runState.whisperDirection === 'right' ? 'right (previous player)' : 'left (next player)';
+      log('Whisper direction set to ' + label + '.');
+      return runState.whisperDirection;
+    };
   } catch (e) {}
 
   // Wire any PvP catalog buttons defined via data-mp-catalog="<kind>".

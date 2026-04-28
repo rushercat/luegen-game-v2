@@ -93,7 +93,47 @@ alter table users add column if not exists email text;
 alter table users add column if not exists oauth_provider text;
 alter table users add column if not exists oauth_sub text;
 
--- Allow OAuth-only
+-- ===== Allow OAuth-only accounts =====
+-- Drop NOT NULL on the password columns so OAuth users can exist without a
+-- password. Keep a CHECK constraint so every row has at least one auth
+-- method (a password or an OAuth identity) — otherwise the row is unusable.
+alter table users alter column password_hash drop not null;
+alter table users alter column password_salt drop not null;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'users_auth_method_present'
+  ) then
+    alter table users add constraint users_auth_method_present
+      check (
+        (password_hash is not null and password_salt is not null)
+        or (oauth_provider is not null and oauth_sub is not null)
+      );
+  end if;
+end $$;
+
+-- ===== OAuth uniqueness =====
+-- Without this, two rows could share the same (provider, sub) and the
+-- find-or-create lookup would silently link an attacker to someone else's
+-- account on a hash collision. Partial index so legacy password-only rows
+-- (NULL provider/sub) don't get included.
+create unique index if not exists users_oauth_provider_sub_unique
+  on users (oauth_provider, oauth_sub)
+  where oauth_provider is not null and oauth_sub is not null;
+
+-- ===== Lookups by email / oauth_sub =====
+-- Speeds up password-reset (when added) and OAuth re-login.
+create index if not exists users_email_idx
+  on users (email) where email is not null;
+create index if not exists users_oauth_sub_idx
+  on users (oauth_sub) where oauth_sub is not null;
+
+-- ===== Brute-force protection columns =====
+-- The application-level rate limiter is in front of /api/login, but record
+-- failed attempts here so the limiter can reset on success and the admin
+-- can see anomalies.
+alter table users add column if not exists failed_login_attempts int not null default 0;
+alter table users add column if not exists last_failed_login_at timestamptz;
 
 
 -- ===== Beta prototype: roguelike progression + admin flag =====
@@ -121,3 +161,16 @@ alter table users add column if not exists earned_achievements text[] not null d
 -- most recent entries by the server. Used to render "recent runs" on the
 -- beta intro screen.
 alter table users add column if not exists beta_run_history jsonb not null default '[]'::jsonb;
+
+-- Defensive cap: if a buggy or malicious client ever bypasses the
+-- application's 20-entry cap, this CHECK keeps the column from growing
+-- unbounded.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'beta_run_history_size_cap'
+  ) then
+    alter table users add constraint beta_run_history_size_cap
+      check (jsonb_array_length(beta_run_history) <= 50);
+  end if;
+end $$;

@@ -158,6 +158,20 @@ async function signup(username, password) {
   return user;
 }
 
+// Generic message used for ALL login failures — wrong username, wrong
+// password, OAuth-only account. Branching the error text gave attackers a
+// trivial enumeration oracle: they could distinguish "no such user" from
+// "right user, wrong password" from "this username uses Google sign-in" with
+// one request each, then map the entire user table.
+const GENERIC_LOGIN_ERROR = 'Wrong username or password.';
+
+// Pre-computed dummy hash + salt used to keep timing roughly constant when
+// the username doesn't exist or the account is OAuth-only. Without this the
+// no-user path returns instantly while the right-user path spends ~tens of ms
+// inside scryptSync, which is itself an enumeration signal.
+const _DUMMY_SALT = crypto.randomBytes(16).toString('hex');
+const _DUMMY_HASH = crypto.scryptSync('not-a-real-password', _DUMMY_SALT, 64).toString('hex');
+
 async function login(username, password) {
   if (!enabled) throw new Error('Accounts are disabled on this server.');
   const lower = String(username || '').trim().toLowerCase();
@@ -166,10 +180,18 @@ async function login(username, password) {
     .select('*')
     .eq('username_lower', lower)
     .maybeSingle();
-  if (!user) throw new Error('Wrong username or password.');
-  if (!user.password_hash) throw new Error('This account uses Google sign-in, not a password.');
-  if (!verifyPassword(password, user.password_hash, user.password_salt)) {
-    throw new Error('Wrong username or password.');
+
+  // Always run a scrypt verify, even when the user doesn't exist or is
+  // OAuth-only. The result is discarded in those branches; it's there to
+  // equalize wall-clock time so an attacker can't time-distinguish the
+  // failure modes. Then return the same generic error for all failures.
+  const hasPasswordAccount = !!(user && user.password_hash && user.password_salt);
+  const ok = hasPasswordAccount
+    ? verifyPassword(password, user.password_hash, user.password_salt)
+    : (verifyPassword(password || '', _DUMMY_HASH, _DUMMY_SALT), false);
+
+  if (!user || !hasPasswordAccount || !ok) {
+    throw new Error(GENERIC_LOGIN_ERROR);
   }
   return user;
 }
