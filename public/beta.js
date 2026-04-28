@@ -95,6 +95,35 @@
       unlockOnRunWin: true,
       unlockHint: 'Beat Floor 9 (win a full run).',
     },
+    magician: {
+      id: 'magician', name: 'The Magician',
+      flavor: "\"Sleight is just slow magic. Once a round, the deck bends to me.\"",
+      passive: 'Once per round: transform a hand card to a different rank (lossy: rank changes, affix wiped).',
+      transformPerRound: true,
+      startingJoker: 'sleightOfHand',
+      unlockAtFloor: 3,
+      unlockHint: 'Reach Floor 3 in any run.',
+    },
+    engineer: {
+      id: 'engineer', name: 'The Engineer',
+      flavor: "\"Affixes have grain — you just need to know where to apply pressure.\"",
+      passive: 'Run deck starts with 1 random affixed card. Affix services 25% off.',
+      engineerStartingAffix: true,
+      affixDiscount: 0.25,
+      startingJoker: 'forgeHand',
+      unlockAtFloor: 5,
+      unlockHint: 'Reach Floor 5 in any run.',
+    },
+    witch: {
+      id: 'witch', name: 'The Witch',
+      flavor: "\"Glass cuts both ways. Mine never reaches the cap.\"",
+      passive: "Glass burns don't count toward the burn cap. Run deck starts with 1 Glass card.",
+      witchUncappedGlass: true,
+      startingGlassCard: true,
+      startingJoker: null,
+      unlockAtFloor: 7,
+      unlockHint: 'Reach Floor 7 in any run.',
+    },
   };
 
   // Phase 5+: progression tracking. Prefers server-side state (when the
@@ -268,12 +297,16 @@
 
   // Phase 8+: floor modifiers (Act 2+ on non-boss floors)
   const FLOOR_MODIFIERS = {
-    foggy:   { id: 'foggy',   name: 'Foggy',   desc: 'Target rank fades after 5 seconds.' },
-    greedy:  { id: 'greedy',  name: 'Greedy',  desc: '+100% gold, but Jack limit drops to 3.' },
-    brittle: { id: 'brittle', name: 'Brittle', desc: 'Every card is temporarily Glass for this floor.' },
-    echoing: { id: 'echoing', name: 'Echoing', desc: 'Each play: 20% chance the first card is flashed to all players.' },
-    silent:  { id: 'silent',  name: 'Silent',  desc: 'No bot tells are visible this floor.' },
-    tariff:  { id: 'tariff',  name: 'Tariff',  desc: 'Each Liar call you make costs 5g.' },
+    foggy:    { id: 'foggy',    name: 'Foggy',    desc: 'Target rank fades after 5 seconds.' },
+    greedy:   { id: 'greedy',   name: 'Greedy',   desc: '+100% gold, but Jack limit drops to 3.' },
+    brittle:  { id: 'brittle',  name: 'Brittle',  desc: 'Every card is temporarily Glass for this floor.' },
+    echoing:  { id: 'echoing',  name: 'Echoing',  desc: 'Each play: 20% chance the first card is flashed to all players.' },
+    silent:   { id: 'silent',   name: 'Silent',   desc: 'No bot tells are visible this floor.' },
+    tariff:   { id: 'tariff',   name: 'Tariff',   desc: 'Each Liar call you make costs 5g.' },
+    inverted: { id: 'inverted', name: 'Inverted', desc: 'Target rank is locked to J this floor — Jacks are truth, all other ranks are bluffs.' },
+    sticky:   { id: 'sticky',   name: 'Sticky',   desc: 'Once a card is revealed, it stays face-up in the pile area for the rest of the round.' },
+    rapid:    { id: 'rapid',    name: 'Rapid',    desc: 'Challenge windows are 2 seconds for everyone.' },
+    richFolk: { id: 'richFolk', name: 'Rich Folk', desc: 'Gold rewards halved, but joker prices in the shop are 50% off.' },
   };
 
   // Phase 8+: AI bot personalities — each teaches a different kind of read
@@ -287,18 +320,34 @@
   };
 
   // Phase 8+: bosses on Floor 3, 6, 9
+  // Floor 9 has 3 possible bosses — Lugen (default), and the alts
+  // The Mirror and The Hollow that unlock after the first run win.
   const BOSS_CATALOG = {
-    auditor: { id: 'auditor', name: 'The Auditor', floor: 3, bluffRate: 0.30, challengeRate: 1.00, tell: 'always challenges — predictable', desc: 'Challenges every play.' },
+    auditor: { id: 'auditor', name: 'The Auditor', floor: 3, bluffRate: 0.30, challengeRate: 1.00, tell: 'snaps the ledger shut', desc: 'Challenges every Nth play (N rolls 1–5 each round).' },
     cheater: { id: 'cheater', name: 'The Cheater', floor: 6, bluffRate: 1.00, challengeRate: 0.30, tell: 'a tiny smirk on 1-in-4 lies', desc: 'Lies on every play.' },
-    lugen:   { id: 'lugen',   name: 'Lugen',       floor: 9, bluffRate: 0.50, challengeRate: 0.50, tell: null, desc: 'No tells. Pure math. The final boss.' },
+    lugen:   { id: 'lugen',   name: 'Lugen',       floor: 9, bluffRate: 0.55, challengeRate: 0.50, tell: null, desc: 'Starts with 7 cards, Jack limit 6, every play is randomly affixed. Can call Liar out-of-turn once per round.' },
+    mirror:  { id: 'mirror',  name: 'The Mirror',  floor: 9, bluffRate: 0.50, challengeRate: 0.50, tell: null, alt: true, desc: 'Plays whatever you played last turn. Disrupt your own pattern to beat it.' },
+    hollow:  { id: 'hollow',  name: 'The Hollow',  floor: 9, bluffRate: 0.50, challengeRate: 0.50, tell: null, alt: true, desc: 'Hand size is hidden from you. Pure paranoia.' },
   };
 
   function isBossFloor(f) { return f === 3 || f === 6 || f === 9; }
+  // Returns the *active* boss for a given floor, considering Floor 9 alts.
   function getBoss(f) {
+    if (f === 9 && runState && runState.floor9BossId) {
+      return BOSS_CATALOG[runState.floor9BossId] || BOSS_CATALOG.lugen;
+    }
     for (const id of Object.keys(BOSS_CATALOG)) {
-      if (BOSS_CATALOG[id].floor === f) return BOSS_CATALOG[id];
+      const b = BOSS_CATALOG[id];
+      if (b.floor === f && !b.alt) return b;
     }
     return null;
+  }
+  // Pick which Floor 9 boss the player faces. Lugen is the default;
+  // Mirror and Hollow unlock after the first full run win.
+  function pickFloor9Boss() {
+    if (!hasWonRun()) return 'lugen';
+    const pool = ['lugen', 'mirror', 'hollow'];
+    return pool[Math.floor(Math.random() * pool.length)];
   }
   function getCurrentAct() {
     if (!runState) return 1;
@@ -308,7 +357,8 @@
   }
   function shouldShowTells() {
     if (runState && runState.currentFloorModifier === 'silent') return false;
-    return getCurrentAct() <= 2;  // Act 3 = no tells
+    if (hasRelic('compass')) return true;  // Compass: tells visible in Act III too.
+    return getCurrentAct() <= 2;  // Act 3 = no tells (without Compass)
   }
   function getBotPersonality(botIdx) {
     if (!runState || !runState.botPersonalities) return null;
@@ -317,9 +367,9 @@
 
   // Phase 7+: relics — permanent passive bonuses (one of each per run)
   const BOSS_RELIC_POOL = {
-    auditor: ['crackedCoin', 'loadedDie'],
-    cheater: ['pocketWatch', 'handMirror'],
-    lugen:   ['ironStomach', 'ledger'],
+    auditor: ['crackedCoin', 'loadedDie', 'tarnishedCrown'],
+    cheater: ['pocketWatch', 'handMirror', 'compass'],
+    lugen:   ['ironStomach', 'ledger', 'bookmark'],
   };
   const RELIC_CATALOG = {
     crackedCoin: { id: 'crackedCoin', name: 'Cracked Coin', price: 200, desc: 'Each round start: gain 5g × Hearts remaining.' },
@@ -328,6 +378,16 @@
     handMirror:  { id: 'handMirror',  name: 'Hand Mirror',  price: 250, desc: 'At round start, see one random card from each opponent.' },
     ironStomach: { id: 'ironStomach', name: 'Iron Stomach', price: 300, desc: 'Glass-burned run-deck cards return as Steel at end of round.' },
     ledger:      { id: 'ledger',      name: 'The Ledger',   price: 300, desc: '+25% gold from all sources (stacks with Gambler).' },
+    hourglass:    { id: 'hourglass',    name: 'The Hourglass',    price: 250, desc: 'Treasure. Your challenge window is +4s. Bots without it have their windows reduced by 30%.' },
+    seersEye:     { id: 'seersEye',     name: "Seer's Eye",       price: 250, desc: 'Treasure. See the affix ring (not rank) on every card in every opponent\'s hand.' },
+    crackedMirror:{ id: 'crackedMirror',name: 'Cracked Mirror',   price: 300, desc: 'Treasure. Once per floor: rewind your last play (cards back to hand, pile reverted) — bots\' choices are NOT redone.' },
+    dragonScale:  { id: 'dragonScale',  name: 'Dragon Scale',     price: 300, desc: 'Treasure. Each Steel card in your hand: +1 Jack limit and +10% gold from all sources.' },
+    compass:      { id: 'compass',      name: 'The Compass',      price: 300, desc: 'Boss reward. Bot tells become readable in Act III (normally silent).' },
+    tarnishedCrown:{ id: 'tarnishedCrown', name: 'Tarnished Crown', price: 250, desc: 'Boss reward. Win a floor without losing any Hearts on it = +50g bonus.' },
+    cowardsCloak: { id: 'cowardsCloak', name: "Coward's Cloak",   price: 200, desc: 'Treasure. Your "Pass" actions never trigger Echo / Eavesdropper / Cold Read peeks on your hand.' },
+    bookmark:     { id: 'bookmark',     name: 'The Bookmark',     price: 350, desc: 'Boss reward. End of each round: optionally save a hand card into your run deck (replacing one).' },
+    steelSpine:   { id: 'steelSpine',   name: 'Steel Spine',      price: 200, desc: 'Treasure. Cursed cards block Liar for 1 turn instead of 2 after pickup.' },
+    stackedDeck:  { id: 'stackedDeck',  name: 'Stacked Deck',     price: 250, desc: 'Treasure. Run deck cap raised from 24 to 32.' },
   };
 
   const HEART_SHARDS_REQUIRED = 3;     // 3 shards = +1 Heart
@@ -341,7 +401,7 @@
     slowHand: { id: 'slowHand', name: 'Slow Hand', rarity: 'Common', price: 80, desc: "Your challenge window is 10 seconds (default 5)." },
     taxman: { id: 'taxman', name: 'The Taxman', rarity: 'Common', price: 80, desc: "When an opponent picks up a pile of 5+ cards, you gain 10g." },
     eavesdropper: { id: 'eavesdropper', name: 'Eavesdropper', rarity: 'Uncommon', price: 150, desc: "Every 2 rounds, when the player before you plays, see whether their hand has NONE / SOME (1-2) / MANY (3+) matches for the Target." },
-    scapegoat: { id: 'scapegoat', name: 'The Scapegoat', rarity: 'Uncommon', price: 150, desc: "If you are caught lying with a Jack, the Jack(s) go to the challenger's hand. The rest of the pile still goes to you." },
+    scapegoat: { id: 'scapegoat', name: 'The Scapegoat', rarity: 'Uncommon', price: 150, desc: "If you are caught lying with a Jack in the pile, ONE Jack is forced into the challenger's hand. The rest of the pile still goes to you." },
     hotSeat: { id: 'hotSeat', name: 'Hot Seat', rarity: 'Uncommon', price: 150, desc: "Your right neighbor's challenge window is 3 seconds (default 5)." },
     sleightOfHand: { id: 'sleightOfHand', name: 'Sleight of Hand', rarity: 'Uncommon', price: 150, desc: "Once per round, on your turn, draw 1 card from the top of the draw pile." },
     spikedTrap: { id: 'spikedTrap', name: 'Spiked Trap', rarity: 'Rare', price: 250, desc: "If you tell the truth and are challenged, the challenger draws 3 extra cards." },
@@ -350,7 +410,19 @@
     doubletalk: { id: 'doubletalk', name: 'Doubletalk', rarity: 'Rare', price: 250, desc: "Once per round, declare a double-turn: play 2-4 cards instead of 1-3." },
     blackHole: { id: 'blackHole', name: 'Black Hole', rarity: 'Legendary', price: 400, desc: "On a successful Jack bluff (no challenge), delete one non-Jack card from your hand." },
     coldRead: { id: 'coldRead', name: 'Cold Read', rarity: 'Legendary', price: 400, desc: "At the start of each round, see one random card from each opponent's hand." },
-    vengefulSpirit: { id: 'vengefulSpirit', name: 'Vengeful Spirit', rarity: 'Legendary', price: 400, desc: "If the Jack curse eliminates you, the next active player is also eliminated." },
+    vengefulSpirit: { id: 'vengefulSpirit', name: 'Vengeful Spirit', rarity: 'Legendary', price: 400, desc: "If the Jack curse takes you, the next active player starts the next round with 2 forced Jacks." },
+    magpie:        { id: 'magpie',        name: 'The Magpie',     rarity: 'Common',    price: 80,  desc: "When an opponent picks up the pile, gain 1g per affixed card in it." },
+    forgeHand:     { id: 'forgeHand',     name: 'Forge Hand',     rarity: 'Common',    price: 80,  desc: "Affix-applying shop services (Glass Shard, Spiked Wire, Steel Plating) cost 25% less." },
+    lastWord:      { id: 'lastWord',      name: 'Last Word',      rarity: 'Uncommon',  price: 150, desc: "Once per floor: when caught lying, veto the result (pile goes to challenger). Can't use if your last hand card was in the play." },
+    ricochet:      { id: 'ricochet',      name: 'Ricochet',       rarity: 'Uncommon',  price: 150, desc: "When you take a pile of 3+ Jacks, half (rounded down) bounce to a random opponent." },
+    memorizer:     { id: 'memorizer',     name: 'The Memorizer',  rarity: 'Uncommon',  price: 150, desc: "Every revealed card on a Liar call is logged in a private side panel for the rest of the round." },
+    trickster:     { id: 'trickster',     name: 'The Trickster',  rarity: 'Uncommon',  price: 150, desc: "Once per round, mark a hand card as a +/-1 wildcard (counts as truth if its rank is one step from the target)." },
+    carouser:      { id: 'carouser',      name: 'The Carouser',   rarity: 'Rare',      price: 250, desc: "Smoke Bomb, Counterfeit, and Jack-be-Nimble each get 1 free use per floor (no charge consumed)." },
+    hotPotato:     { id: 'hotPotato',     name: 'Hot Potato',     rarity: 'Rare',      price: 250, desc: "After picking up 5+ cards, your max play is 5 cards (instead of 3) for the next turn only." },
+    saboteur:      { id: 'saboteur',      name: 'The Saboteur',   rarity: 'Rare',      price: 250, desc: "Once per floor, force a target opponent to take 1 random card from your hand (Jacks are ~30% more likely to be picked)." },
+    doppelganger:  { id: 'doppelganger',  name: 'Doppelganger',   rarity: 'Legendary', price: 400, desc: "Once per round, your next play exactly mimics the previous play (same count, same claim)." },
+    deadHand:      { id: 'deadHand',      name: 'Dead Hand',      rarity: 'Legendary', price: 400, desc: "Once per floor: when you take the pile, the first 2 Jacks stay in the pile (sent to the bottom of the draw pile instead of your hand)." },
+    patron:        { id: 'patron',        name: 'The Patron',     rarity: 'Legendary', price: 400, desc: "+1g per Gilded card in your hand on every turn (stacks with Gilded's base +2g)." },
   };
   const SLOW_HAND_WINDOW_MS = 10000;
   const SPIKED_TRAP_DRAWS = 3;
@@ -393,6 +465,16 @@
       desc: 'Discard up to 2 Jacks from your hand. Use anytime on your turn.',
       enabled: true,
     },
+    { id: 'whisperNetwork', name: 'Whisper Network', price: 30,  desc: 'Hear how many Jacks each opponent currently holds (private, single read).', enabled: true },
+    { id: 'luckyCoin',      name: 'Lucky Coin',      price: 20,  desc: "Re-roll the affix on one hand card to a random new one (Steel-immune; Cursed clears).", enabled: true },
+    { id: 'snakeEyes',      name: 'Snake Eyes',      price: 45,  desc: 'Cancel the next Target Rank rotation (target stays the same after the next Liar call).', enabled: true },
+    { id: 'emptyThreat',    name: 'Empty Threat',    price: 40,  desc: 'Floor-locked. Feign a Liar call against the next bot play — they react cautiously, no real call.', enabled: true },
+    { id: 'distillation',   name: 'Distillation',    price: 60,  desc: 'Merge 2 same-rank hand cards into 1 with a random affix (Steel/Mirage-immune).', enabled: true },
+    { id: 'pickpocket',     name: 'Pickpocket',      price: 90,  desc: 'Floor-locked. Steal a random non-Jack from an opponent (positive affixes weighted higher).', enabled: true },
+    { id: 'deadDrop',       name: 'Dead Drop',       price: 70,  desc: 'Discard 3 random hand cards, then draw 3 from the draw pile.', enabled: true },
+    { id: 'markedDeck',     name: 'Marked Deck',     price: 100, desc: 'Floor-locked. Apply a chosen affix to a random draw-pile card.', enabled: true },
+    { id: 'jokersMask',     name: "The Joker's Mask",price: 75,  desc: 'One-shot: tag a non-Jack so it counts as a Jack for the curse (use with Safety Net / Vengeful Spirit).', enabled: true },
+    { id: 'mirrorShard',    name: 'Mirror Shard',    price: 45,  desc: 'Arm: the next Liar call against you reveals only the result, not the cards.', enabled: true },
     {
       id: 'glassShard',
       name: 'Glass Shard',
@@ -437,10 +519,27 @@
     { id: 'doubletalk',   name: 'JOKER · Doubletalk',      price: 250, desc: '[Rare] Once per round: play 2-4 cards.',                      enabled: true, type: 'joker' },
     { id: 'blackHole',    name: 'JOKER · Black Hole',      price: 400, desc: '[Legendary] Successful Jack bluff: delete a non-Jack.',       enabled: true, type: 'joker' },
     { id: 'coldRead',     name: 'JOKER · Cold Read',       price: 400, desc: '[Legendary] Round start: see 1 card from each opponent.',      enabled: true, type: 'joker' },
-    { id: 'vengefulSpirit',name:'JOKER · Vengeful Spirit', price: 400, desc: '[Legendary] Jack-cursed = drag next active player down.',      enabled: true, type: 'joker' },
+    { id: 'vengefulSpirit',name:'JOKER · Vengeful Spirit', price: 400, desc: '[Legendary] Jack-cursed = next active player starts next round with 2 forced Jacks.', enabled: true, type: 'joker' },
+    { id: 'magpie',       name: 'JOKER · The Magpie',     price: 80,  desc: '[Common] Opponent pickup = +1g per affixed card.',                                                              enabled: true, type: 'joker' },
+    { id: 'forgeHand',    name: 'JOKER · Forge Hand',     price: 80,  desc: '[Common] Glass Shard / Spiked Wire / Steel Plating cost 25% less.',                                            enabled: true, type: 'joker' },
+    { id: 'lastWord',     name: 'JOKER · Last Word',      price: 150, desc: '[Uncommon] Once per floor: veto a Liar call against you.',                                                     enabled: true, type: 'joker' },
+    { id: 'ricochet',     name: 'JOKER · Ricochet',       price: 150, desc: '[Uncommon] Pile of 3+ Jacks taken = half bounce to a random opponent.',                                        enabled: true, type: 'joker' },
+    { id: 'memorizer',    name: 'JOKER · The Memorizer',  price: 150, desc: '[Uncommon] Reveals are logged in a private panel for the round.',                                              enabled: true, type: 'joker' },
+    { id: 'trickster',    name: 'JOKER · The Trickster',  price: 150, desc: '[Uncommon] Once per round: mark a hand card as a +/-1 wildcard.',                                              enabled: true, type: 'joker' },
+    { id: 'carouser',     name: 'JOKER · The Carouser',   price: 250, desc: '[Rare] Smoke / Counterfeit / Jack-be-Nimble: 1 free use each per floor.',                                       enabled: true, type: 'joker' },
+    { id: 'hotPotato',    name: 'JOKER · Hot Potato',     price: 250, desc: '[Rare] After 5+ pickup: next turn max play = 5 cards.',                                                         enabled: true, type: 'joker' },
+    { id: 'saboteur',     name: 'JOKER · The Saboteur',   price: 250, desc: '[Rare] Once per floor: dump a random card from your hand (Jacks more likely) into a chosen opponent.',         enabled: true, type: 'joker' },
+    { id: 'doppelganger', name: 'JOKER · Doppelganger',   price: 400, desc: '[Legendary] Once per round: next play forced to match previous play (count + claim).',                          enabled: true, type: 'joker' },
+    { id: 'deadHand',     name: 'JOKER · Dead Hand',      price: 400, desc: '[Legendary] Once per floor: 2 Jacks in a pile you take are kept out of your hand.',                             enabled: true, type: 'joker' },
+    { id: 'patron',       name: 'JOKER · The Patron',     price: 400, desc: '[Legendary] +1g per Gilded card in hand each turn (stacks with Gilded base).',                                  enabled: true, type: 'joker' },
   ];
 
   // Phase 3: random events at the Event fork node.
+  // Random affix pool used by several events.
+  const _EVENT_AFFIX_POOL = ['gilded', 'glass', 'spiked', 'cursed', 'steel', 'mirage', 'hollow', 'echo'];
+  function _randAffix() { return _EVENT_AFFIX_POOL[Math.floor(Math.random() * _EVENT_AFFIX_POOL.length)]; }
+  function _randRank() { return ['A','K','Q','10'][Math.floor(Math.random() * 4)]; }
+
   const EVENTS = [
     {
       title: 'Found Coins',
@@ -460,8 +559,13 @@
         runState.gold -= cost;
         if (Math.random() < 0.5) {
           const g = addGold(75);
+          if (runState.ach) {
+            runState.ach.charlatanStreak = (runState.ach.charlatanStreak || 0) + 1;
+            if (runState.ach.charlatanStreak >= 5) _achGrant('gamblersHand');
+          }
           return '-' + cost + 'g, +' + g + 'g (heads)';
         }
+        if (runState.ach) runState.ach.charlatanStreak = 0;
         return '-' + cost + 'g (tails)';
       },
     },
@@ -474,7 +578,228 @@
         return '-' + loss + 'g';
       },
     },
+    {
+      title: 'Mysterious Stranger',
+      text: "A hooded figure offers a trade: a random card from your run deck for one of theirs (rumored to carry odd affixes).",
+      run: () => {
+        if (!runState.runDeck || runState.runDeck.length === 0) return 'No deck to trade.';
+        const idx = Math.floor(Math.random() * runState.runDeck.length);
+        const lost = runState.runDeck[idx];
+        const newAffix = _randAffix();
+        const newRank = _randRank();
+        runState.runDeck[idx] = {
+          rank: newRank,
+          id: 'mystery_' + Date.now() + '_' + Math.floor(Math.random()*1000),
+          owner: 0,
+          affix: newAffix,
+        };
+        return 'Traded ' + lost.rank + (lost.affix ? '['+lost.affix+']' : '') +
+               ' for ' + newRank + ' [' + newAffix + ']';
+      },
+    },
+    {
+      title: 'Wandering Merchant',
+      text: 'A merchant offers one rare consumable at 60% price.',
+      run: () => {
+        // Pick a random consumable id from inventory-trackable ids.
+        const POOL = ['whisperNetwork', 'luckyCoin', 'snakeEyes', 'distillation', 'deadDrop', 'jokersMask', 'mirrorShard', 'smokeBomb', 'counterfeit', 'jackBeNimble'];
+        const PRICES = { whisperNetwork: 30, luckyCoin: 20, snakeEyes: 45, distillation: 60, deadDrop: 70, jokersMask: 75, mirrorShard: 45, smokeBomb: 35, counterfeit: 35, jackBeNimble: 90 };
+        const NAMES = { whisperNetwork: 'Whisper Network', luckyCoin: 'Lucky Coin', snakeEyes: 'Snake Eyes', distillation: 'Distillation', deadDrop: 'Dead Drop', jokersMask: "Joker's Mask", mirrorShard: 'Mirror Shard', smokeBomb: 'Smoke Bomb', counterfeit: 'Counterfeit', jackBeNimble: 'Jack-be-Nimble' };
+        const pickId = POOL[Math.floor(Math.random() * POOL.length)];
+        const price = Math.floor(PRICES[pickId] * 0.60);
+        if (runState.gold < price) return 'Could not afford ' + NAMES[pickId] + ' (' + price + 'g).';
+        runState.gold -= price;
+        runState.inventory[pickId] = (runState.inventory[pickId] || 0) + 1;
+        return 'Bought ' + NAMES[pickId] + ' (-' + price + 'g).';
+      },
+    },
+    {
+      title: 'Card Sharp',
+      text: 'A sharp eyes you. "50g and I tell you what tomorrow brings."',
+      run: () => {
+        const cost = Math.min(50, runState.gold);
+        if (cost < 50) return 'Not enough gold (50g needed).';
+        runState.gold -= cost;
+        // Pre-roll the next floor's modifier so we can show it now AND lock it in.
+        const nextFloor = (runState.currentFloor || 1) + 1;
+        let nextMod = null;
+        if (nextFloor >= 4 && nextFloor <= 8 && (nextFloor !== 6)) {  // not a boss floor
+          const ids = Object.keys(FLOOR_MODIFIERS);
+          nextMod = ids[Math.floor(Math.random() * ids.length)];
+          runState.preRolledNextFloorMod = nextMod;
+        }
+        return nextMod
+          ? 'Next floor will be ' + (FLOOR_MODIFIERS[nextMod] ? FLOOR_MODIFIERS[nextMod].name : nextMod) + '.'
+          : 'No modifier coming next floor.';
+      },
+    },
+    {
+      title: 'The Old Soldier',
+      text: 'A drunk veteran offers to "watch your back" — 25g for one round of Jack-curse immunity.',
+      run: () => {
+        const cost = Math.min(25, runState.gold);
+        if (cost < 25) return 'Not enough gold (25g needed).';
+        runState.gold -= cost;
+        runState.oldSoldierImmuneNextRound = true;
+        return 'Granted Jack-curse immunity for the next round.';
+      },
+    },
+    {
+      title: 'Lucky Find',
+      text: 'You stumble across a strange charm. It clings to one of your cards.',
+      run: () => {
+        if (!runState.runDeck || runState.runDeck.length === 0) return 'No deck cards.';
+        const candidates = runState.runDeck.filter(c => c.affix !== 'steel');
+        if (candidates.length === 0) return 'All cards Steel — charm slides off.';
+        const card = candidates[Math.floor(Math.random() * candidates.length)];
+        const old = card.affix;
+        card.affix = _randAffix();
+        return 'Random affix on ' + card.rank + ': ' + (old || 'plain') + ' -> ' + card.affix + '.';
+      },
+    },
+    {
+      title: 'Shrine of Hearts',
+      text: 'A small shrine pulses with warmth. Donate 100g for a Heart shard.',
+      run: () => {
+        if (runState.gold < 100) return 'Not enough gold (100g needed).';
+        runState.gold -= 100;
+        runState.heartShards = (runState.heartShards || 0) + 1;
+        if (runState.heartShards >= HEART_SHARDS_REQUIRED) {
+          runState.hearts++;
+          runState.heartShards = 0;
+          return '+1 shard. Shards completed -> +1 Heart!';
+        }
+        return '+1 shard (' + runState.heartShards + '/' + HEART_SHARDS_REQUIRED + ').';
+      },
+    },
+    {
+      title: 'Drunken Brawl',
+      text: 'A brawl breaks out. You take a hit but pocket a Counterfeit on the way out.',
+      run: () => {
+        const cost = Math.min(30, runState.gold);
+        runState.gold -= cost;
+        runState.inventory.counterfeit = (runState.inventory.counterfeit || 0) + 1;
+        return '-' + cost + 'g, +1 Counterfeit.';
+      },
+    },
+    {
+      title: "The Auditor's Apprentice",
+      text: 'A note at the table reads: "80g and I show you who you\'ll face next floor."',
+      run: () => {
+        if (runState.gold < 80) return 'Not enough gold (80g needed).';
+        runState.gold -= 80;
+        // Pre-roll next floor's bot personalities so we can preview them.
+        const ids = Object.keys(PERSONALITY_CATALOG);
+        const preview = [];
+        for (let i = 1; i < NUM_PLAYERS; i++) {
+          preview.push(ids[Math.floor(Math.random() * ids.length)]);
+        }
+        runState.preRolledNextFloorPersonalities = preview;
+        const names = preview.map(id => PERSONALITY_CATALOG[id] ? PERSONALITY_CATALOG[id].name : id);
+        return 'Next floor: ' + names.join(', ') + '.';
+      },
+    },
   ];
+
+  // ============================================================
+  // Achievements (Phase 9+) — local catalog, localStorage persistence,
+  // and a tiny on-screen toast when one is unlocked.
+  // ============================================================
+  const ACHIEVEMENT_CATALOG = {
+    // Mastery
+    pacifist:      { id: 'pacifist',      cat: 'Mastery',     name: 'The Pacifist',     desc: 'Win a run without ever calling Liar.',                              unlocks: '\"Pacifist\" card back' },
+    truthWins:     { id: 'truthWins',     cat: 'Mastery',     name: 'Truth Wins',       desc: 'Survive 10 challenges where you told the truth in a single run.', unlocks: 'Gold border tint' },
+    liarsTongue:   { id: 'liarsTongue',   cat: 'Mastery',     name: "Liar's Tongue",    desc: 'Lie 10 times in a single round and never get caught.',           unlocks: '\"Smirk\" elimination animation' },
+    bossSlayer:    { id: 'bossSlayer',    cat: 'Mastery',     name: 'Boss Slayer',      desc: 'Beat all three Floor 9 alt bosses (Lugen, Mirror, Hollow).',     unlocks: '\"Crown\" card back' },
+    untouched:     { id: 'untouched',     cat: 'Mastery',     name: 'Untouched',        desc: 'Beat Lugen without losing a single Heart.',                       unlocks: 'Alt Lugen card art' },
+    // Build identity
+    ironWill:      { id: 'ironWill',      cat: 'Build',       name: 'Iron Will',        desc: 'Win a run with at least 4 Steel-affixed cards in your run deck.', unlocks: 'Steel border tint' },
+    glassCannon:   { id: 'glassCannon',   cat: 'Build',       name: 'Glass Cannon',     desc: 'Burn 100 cards across all runs.',                                  unlocks: 'Glass alt VFX' },
+    massForgery:   { id: 'massForgery',   cat: 'Build',       name: 'Mass Forgery',     desc: 'Make 4 of your run-deck cards be the same card via Forger.',     unlocks: '\"Forger\" alt joker portrait' },
+    pacifier:      { id: 'pacifier',      cat: 'Build',       name: 'The Pacifier',     desc: 'Hold a Cursed card for 5 consecutive rounds.',                    unlocks: 'Cursed alt VFX' },
+    affixConn:     { id: 'affixConn',     cat: 'Build',       name: 'Affix Connoisseur',desc: 'Have all 8 affixes appear simultaneously in your run deck.',     unlocks: 'Rainbow border tint' },
+    // Economy / fluff
+    wallet:        { id: 'wallet',        cat: 'Economy',     name: 'The Wallet',       desc: 'End a run with 1000+ gold.',                                       unlocks: 'Banker alt portrait' },
+    spendthrift:   { id: 'spendthrift',   cat: 'Economy',     name: 'Spendthrift',      desc: 'Spend 2000g in a single run.',                                     unlocks: '\"Coin shower\" victory animation' },
+    speedDemon:    { id: 'speedDemon',    cat: 'Economy',     name: 'Speed Demon',      desc: 'Win a floor in under 2 minutes.',                                  unlocks: 'Lightning elimination animation' },
+    heartSurgeon:  { id: 'heartSurgeon',  cat: 'Economy',     name: 'Heart Surgeon',    desc: 'Collect 10 Heart shards across all runs.',                         unlocks: 'Heart card back' },
+    emptyHand:     { id: 'emptyHand',     cat: 'Economy',     name: 'Empty Hand',       desc: 'Empty your hand on the very first turn of a round.',              unlocks: '\"Magician\" alt portrait' },
+    // Run-defining
+    strippedDown:  { id: 'strippedDown',  cat: 'Run-defining',name: 'Stripped Down',    desc: 'Win a run with only 4 cards in your run deck.',                    unlocks: 'Minimalist card back' },
+    jokersWild:    { id: 'jokersWild',    cat: 'Run-defining',name: "Joker's Wild",     desc: 'Equip 5 jokers in a single run.',                                  unlocks: "Joker's Wild PvP starter deck" },
+    lastStand:     { id: 'lastStand',     cat: 'Run-defining',name: 'Last Stand',       desc: 'Win a round with 1 card in hand and 1 Heart remaining.',          unlocks: 'Phoenix border tint' },
+    gamblersHand:  { id: 'gamblersHand',  cat: 'Run-defining',name: "The Gambler's Hand", desc: "Win Charlatan's Bet 5 times in a row in a single run.",           unlocks: 'Coin-flip animation' },
+    stoic:         { id: 'stoic',         cat: 'Run-defining',name: 'Stoic',            desc: 'Use no consumables in an entire run.',                              unlocks: '\"Monk\" character portrait' },
+  };
+
+  const _ACH_STORAGE_KEY = 'lugenBetaAchievements';
+  const _ACH_PROGRESS_KEY = 'lugenBetaAchievementProgress';
+
+  function _achGetUnlocked() {
+    try {
+      const raw = localStorage.getItem(_ACH_STORAGE_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+  }
+  function _achIsUnlocked(id) { return _achGetUnlocked().includes(id); }
+  function _achGetProgress() {
+    try {
+      const raw = localStorage.getItem(_ACH_PROGRESS_KEY);
+      if (!raw) return {};
+      const o = JSON.parse(raw);
+      return (o && typeof o === 'object') ? o : {};
+    } catch (e) { return {}; }
+  }
+  function _achSaveProgress(p) {
+    try { localStorage.setItem(_ACH_PROGRESS_KEY, JSON.stringify(p)); } catch (e) {}
+  }
+  function _achAddProgress(key, n) {
+    const p = _achGetProgress();
+    p[key] = (p[key] || 0) + n;
+    _achSaveProgress(p);
+    return p[key];
+  }
+  function _achGrantBossKill(bossId) {
+    const p = _achGetProgress();
+    p.bossKills = p.bossKills || {};
+    p.bossKills[bossId] = (p.bossKills[bossId] || 0) + 1;
+    _achSaveProgress(p);
+    if (p.bossKills.lugen && p.bossKills.mirror && p.bossKills.hollow) {
+      _achGrant('bossSlayer');
+    }
+  }
+  function _achGrant(id) {
+    if (!ACHIEVEMENT_CATALOG[id]) return;
+    if (_achIsUnlocked(id)) return;
+    const cur = _achGetUnlocked();
+    cur.push(id);
+    try { localStorage.setItem(_ACH_STORAGE_KEY, JSON.stringify(cur)); } catch (e) {}
+    _achToast(ACHIEVEMENT_CATALOG[id]);
+    log('\u2728 Achievement unlocked: ' + ACHIEVEMENT_CATALOG[id].name);
+  }
+  function _achToast(ach) {
+    let toast = document.getElementById('betaAchToast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'betaAchToast';
+      toast.className = 'fixed top-4 right-1/2 translate-x-1/2 max-w-sm bg-gradient-to-br from-yellow-500 to-amber-700 text-black rounded-xl shadow-2xl p-4 z-50 hidden cursor-pointer';
+      toast.style.transform = 'translateX(50%)';
+      toast.addEventListener('click', () => toast.classList.add('hidden'));
+      document.body.appendChild(toast);
+      toast._timer = null;
+    }
+    toast.innerHTML =
+      '<div class="text-xs uppercase tracking-widest font-bold">\ud83c\udfc6 Achievement unlocked</div>' +
+      '<div class="text-lg font-extrabold">' + escapeHtml(ach.name) + '</div>' +
+      '<div class="text-xs">' + escapeHtml(ach.desc) + '</div>' +
+      '<div class="text-xs italic mt-1">Unlocks: ' + escapeHtml(ach.unlocks || '\u2014') + '</div>' +
+      '<div class="text-[10px] mt-1 opacity-70">click to dismiss</div>';
+    toast.classList.remove('hidden');
+    if (toast._timer) clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => toast.classList.add('hidden'), 7000);
+  }
 
   // ---- State ----
   let runState = null;          // run-level: hearts, floor, round wins
@@ -498,9 +823,20 @@
       runState.botPersonalities[i] = ids[Math.floor(Math.random() * ids.length)];
     }
     // Boss floor: bot 1 becomes the boss
-    const boss = getBoss(runState.currentFloor);
-    if (boss) {
-      runState.botPersonalities[1] = boss.id;
+    if (runState.currentFloor === 9) {
+      // Floor 9: roll the alt boss if unlocked; otherwise Lugen.
+      runState.floor9BossId = pickFloor9Boss();
+      runState.botPersonalities[1] = runState.floor9BossId;
+    } else {
+      const boss = getBoss(runState.currentFloor);
+      if (boss) runState.botPersonalities[1] = boss.id;
+    }
+    // Auditor's "every Nth play" cadence — rolls fresh per floor.
+    // Range 1..5: N=1 means every play (gauntlet); N=5 means every fifth.
+    if (runState.botPersonalities.includes('auditor')) {
+      runState.auditorEveryN = 1 + Math.floor(Math.random() * 5);
+    } else {
+      runState.auditorEveryN = 0;
     }
   }
 
@@ -522,15 +858,55 @@
       loadedDieUsedThisFloor: false,
       currentFloorModifier: null,    // Phase 8+
       botPersonalities: [null, null, null, null],  // Phase 8+
+      floorLockedBoughtThisFloor: {},  // Tracks Forger / Jack-be-Nimble per-floor purchases
+      vengefulNextRoundTargets: [],    // Bots that owe a forced-Jack penalty next round
+      lastWordUsedThisFloor: false,
+      saboteurUsedThisFloor: false,
+      deadHandUsedThisFloor: false,
+      carouserUsedThisFloor: { smokeBomb: false, counterfeit: false, jackBeNimble: false },
+      pickpocketUsedThisFloor: false,
+      markedDeckUsedThisFloor: false,
+      emptyThreatUsedThisFloor: false,
+      crackedMirrorUsedThisFloor: false,
+      bookmarkUsedThisRound: false,
+      floorStartHearts: STARTING_HEARTS,
+      // Achievement tracking (per-run)
+      ach: {
+        liarCalls: 0,            // Pacifist: must stay at 0
+        truthSurvivals: 0,       // Truth Wins: 10+ within run
+        consumableUses: 0,       // Stoic: must stay at 0
+        spent: 0,                // Spendthrift: 2000+ in single run
+        jokersEverEquipped: 0,   // Joker's Wild: 5+
+        cursedHoldStreak: 0,     // Pacifier: 5 consecutive rounds with same Cursed card
+        cursedHeldId: null,
+        charlatanStreak: 0,      // Gambler's Hand: 5 wins in a row
+        floorStartTimestamp: 0,  // Speed Demon: track current floor start
+      },
     };
 
     // Assign initial bot personalities
     assignBotPersonalities();
+    if (runState.ach) runState.ach.floorStartTimestamp = Date.now(); // Speed Demon (Floor 1)
 
     if (character) {
       if (character.startingGildedA) {
         const aCard = runState.runDeck.find(c => c.rank === 'A' && !c.affix);
         if (aCard) aCard.affix = 'gilded';
+      }
+      if (character.engineerStartingAffix) {
+        const candidates = runState.runDeck.filter(c => !c.affix && c.rank !== 'J');
+        if (candidates.length > 0) {
+          const card = candidates[Math.floor(Math.random() * candidates.length)];
+          const POOL = ['gilded', 'glass', 'spiked', 'steel', 'mirage', 'hollow', 'echo'];
+          card.affix = POOL[Math.floor(Math.random() * POOL.length)];
+        }
+      }
+      if (character.startingGlassCard) {
+        const candidates = runState.runDeck.filter(c => !c.affix && c.rank !== 'J');
+        if (candidates.length > 0) {
+          const card = candidates[Math.floor(Math.random() * candidates.length)];
+          card.affix = 'glass';
+        }
       }
       if (character.startingJoker) {
         const jokerData = JOKER_CATALOG[character.startingJoker];
@@ -551,6 +927,30 @@
 
   function endRun(victory) {
     const won = victory === true;
+    // Achievement checks at run-end.
+    if (runState && runState.ach) {
+      // Pacifist: never called Liar this run.
+      if (won && (runState.ach.liarCalls || 0) === 0) _achGrant('pacifist');
+      // Stoic: never used a consumable this run.
+      if (won && (runState.ach.consumableUses || 0) === 0) _achGrant('stoic');
+      // Wallet: ended a run with 1000+ gold (any outcome).
+      if ((runState.gold || 0) >= 1000) _achGrant('wallet');
+      // Spendthrift: spent 2000+g this run.
+      if ((runState.ach.spent || 0) >= 2000) _achGrant('spendthrift');
+      // Iron Will (only on win): 4+ Steel-affixed cards in run deck.
+      if (won && runState.runDeck) {
+        const steel = runState.runDeck.filter(c => c.affix === 'steel').length;
+        if (steel >= 4) _achGrant('ironWill');
+      }
+      // Stripped Down (only on win): exactly 4 cards in run deck.
+      if (won && runState.runDeck && runState.runDeck.length <= 4) _achGrant('strippedDown');
+      // Affix Connoisseur (only on win): all 8 affix kinds in run deck.
+      if (won && runState.runDeck) {
+        const present = new Set(runState.runDeck.filter(c => c.affix).map(c => c.affix));
+        const ALL = ['gilded','glass','spiked','cursed','steel','mirage','hollow','echo'];
+        if (ALL.every(a => present.has(a))) _achGrant('affixConn');
+      }
+    }
     if (won) setRunWon();  // Phase 5+: unlock Gambler on first run win
     // Phase 7: record run history (server-side, fire-and-forget)
     if (runState) {
@@ -598,10 +998,40 @@
   function startRound() {
     clearAllTimers();
     selected.clear();
+    _resetPerRoundRelicFlags();
 
     const deck = buildDeck();
     const { hands, drawPile } = deal(deck);
     applyJackFairness(hands, drawPile);
+
+    // Vengeful Spirit: preload Jacks into targets' hands. We swap their non-Jack
+    // cards back into the draw pile to make room. Cap at limit-1 so we never
+    // instantly Jack-curse them (that would be too brutal).
+    if (runState && Array.isArray(runState.vengefulNextRoundTargets) &&
+        runState.vengefulNextRoundTargets.length > 0) {
+      for (const target of runState.vengefulNextRoundTargets) {
+        if (target == null || target < 0 || target >= NUM_PLAYERS) continue;
+        const targetLimit = jackLimitFor(target);
+        let preloaded = 0;
+        for (let i = 0; i < 2; i++) {
+          if (jackCurseWeight(hands[target]) >= targetLimit - 1) break;
+          const jackIdx = drawPile.findIndex(c => c.rank === 'J');
+          if (jackIdx === -1) break;
+          const swapIdx = hands[target].findIndex(c => c.rank !== 'J');
+          if (swapIdx === -1) break;
+          const jack = drawPile.splice(jackIdx, 1)[0];
+          const out = hands[target].splice(swapIdx, 1)[0];
+          hands[target].push(jack);
+          drawPile.unshift(out);
+          preloaded++;
+        }
+        if (preloaded > 0) {
+          log("Vengeful Spirit: " + (BOT_NAMES[target - 1] || ('seat ' + target)) +
+              ' starts with ' + preloaded + ' forced Jack' + (preloaded === 1 ? '' : 's') + '.');
+        }
+      }
+      runState.vengefulNextRoundTargets = [];
+    }
 
     // Phase 8+: Brittle modifier — every card becomes Glass for this round
     if (runState && runState.currentFloorModifier === 'brittle') {
@@ -634,7 +1064,11 @@
         affix: 'cursed',
       });
     }
-    const targetRank = RANKS[Math.floor(Math.random() * RANKS.length)];
+    let targetRank = RANKS[Math.floor(Math.random() * RANKS.length)];
+    // Inverted floor modifier: target rank is locked to J for the round.
+    if (runState && runState.currentFloorModifier === 'inverted') {
+      targetRank = 'J';
+    }
     // Phase 5: Gilded now triggers on every turn start (see triggerGildedTurn).
     // Round-start gold accrues via the first turn's trigger.
 
@@ -656,6 +1090,27 @@
       sleightUsedThisRound: false,
       ironStomachBurned: [],   // Phase 7+: human's run-deck card IDs burned by Glass this round
       burnedCards: [],         // Phase 8+: cards burned this round (for burn cap recycling)
+      auditorChances: 0,       // Bug-fix: Auditor only challenges every Nth chance (N from runState.auditorEveryN)
+      lugenLiarUsedThisRound: false, // Lugen's once-per-round out-of-turn Liar
+      lastHumanPlay: null,     // For The Mirror — what the human played most recently
+      tricksterMarkedId: null,   // Trickster: id of the marked +/-1 wildcard
+      tricksterUsedThisRound: false,
+      doppelArmed: false,        // Doppelganger: arms the next play to copy lastPlay
+      doppelUsedThisRound: false,
+      hotPotatoArmed: false,     // Hot Potato: bonus max-play for next turn
+      memorizerLog: [],          // Memorizer: revealed cards this round
+      snakeEyesLock: false,      // Snake Eyes: cancel next rotation
+      jokersMaskCardId: null,    // Joker's Mask: id of the card counting as a Jack
+      mirrorShardArmed: false,   // Mirror Shard: blind the next reveal against you
+      emptyThreatPending: false, // Empty Threat: next bot bluffs cautiously once
+      magicianUsedThisRound: false, // Magician character: per-round transform
+      // Achievement: Liar's Tongue tracks human lies per round.
+      humanLiesThisRound: 0,
+      humanCaughtThisRound: false,
+      // Achievement: Empty Hand — first turn of a round.
+      humanFirstTurn: true,
+      // Achievement: Glass Cannon — count cards burned this run.
+      // (cumulative across runs done via localStorage progress.)
       gameOver: false,
       challengeOpen: false,
       challengerIdx: -1,
@@ -674,23 +1129,31 @@
           peeks.push(playerLabel(i) + ': ' + c.rank);
         }
       }
-      if (peeks.length > 0) log('Cold Read — ' + peeks.join(', ') + '.');
+      if (peeks.length > 0) privatePeek('Cold Read — ' + peeks.join(', ') + '.');
+    }
+    // Coward's Cloak (defensive): would block bots' Cold Read on YOUR hand.
+    // In solo only the human has jokers, so this acts as a documented hook.
+    if (hasRelic('cowardsCloak')) {
+      // No-op in solo; in PvP this prevents opposing Cold/Echo/Eavesdropper
+      // from peeking the holder's hand on a Pass action.
     }
     // Phase 7+: Cracked Coin relic
     if (hasRelic('crackedCoin')) {
       const got = addGold(5 * runState.hearts);
       if (got > 0) log('Cracked Coin: +' + got + 'g (' + runState.hearts + ' hearts).');
     }
-    // Phase 7+: Hand Mirror relic — like Cold Read but a separate effect
+    // Phase 7+: Hand Mirror relic — peek at one random card from each opponent
+    // who currently holds 2 or more cards. Opponents at 1 card are spared
+    // (you never get to peek at someone's final card).
     if (hasRelic('handMirror')) {
       const peeks = [];
       for (let i = 1; i < NUM_PLAYERS; i++) {
-        if (state.hands[i].length > 0) {
+        if (state.hands[i].length >= 2) {
           const c = state.hands[i][Math.floor(Math.random() * state.hands[i].length)];
           peeks.push(playerLabel(i) + ': ' + c.rank);
         }
       }
-      if (peeks.length > 0) log('Hand Mirror — ' + peeks.join(', ') + '.');
+      if (peeks.length > 0) privatePeek('Hand Mirror — ' + peeks.join(', ') + '.');
     }
 
     // Phase 5: Bait peek — see one random card from a random opponent
@@ -702,7 +1165,7 @@
       if (others.length > 0) {
         const target = others[Math.floor(Math.random() * others.length)];
         const card = state.hands[target][Math.floor(Math.random() * state.hands[target].length)];
-        log("Bait's eye: " + playerLabel(target) + ' has a ' + card.rank +
+        privatePeek("Bait's eye: " + playerLabel(target) + ' has a ' + card.rank +
             (card.affix ? ' (' + card.affix + ')' : '') + '.');
       }
     }
@@ -710,10 +1173,13 @@
       log("Gambler's curse: a Cursed " + gamblerCursedRank + ' is forced into your hand.');
     }
 
+    state.humanFirstTurn = true;
+    state.humanLiesThisRound = 0;
+    state.humanCaughtThisRound = false;
     document.getElementById('betaIntro').classList.add('hidden');
     document.getElementById('betaGame').classList.remove('hidden');
     document.getElementById('betaResult').classList.add('hidden');
-    document.getElementById('betaReveal').innerHTML = '';
+    document.getElementById('betaReveal').innerHTML = '';  // Sticky reveal also gets cleared between rounds.
 
     triggerGildedTurn();  // Phase 5: first turn triggers Gilded too
     render();
@@ -765,10 +1231,53 @@
     }
     runState.roundsWon[winnerIdx]++;
 
+    // Old Soldier event: immunity expires at the end of the next round it
+    // covered (i.e., this round if the event ran between floors).
+    if (runState && runState.oldSoldierImmuneNextRound) {
+      runState.oldSoldierImmuneNextRound = false;
+    }
+    // Liar's Tongue: 10+ lies in a round + never caught -> grant.
+    if (state && (state.humanLiesThisRound || 0) >= 10 && !state.humanCaughtThisRound) {
+      _achGrant('liarsTongue');
+    }
+    // Pacifier: track holding the SAME Cursed card across rounds.
+    if (state && state.hands && state.hands[0] && runState && runState.ach) {
+      const cursed = state.hands[0].find(c => c.affix === 'cursed');
+      if (cursed) {
+        if (runState.ach.cursedHeldId === cursed.id) {
+          runState.ach.cursedHoldStreak = (runState.ach.cursedHoldStreak || 0) + 1;
+        } else {
+          runState.ach.cursedHeldId = cursed.id;
+          runState.ach.cursedHoldStreak = 1;
+        }
+        if (runState.ach.cursedHoldStreak >= 5) _achGrant('pacifier');
+      } else {
+        runState.ach.cursedHeldId = null;
+        runState.ach.cursedHoldStreak = 0;
+      }
+    }
+    // Last Stand: human won the round with 1 card in hand and 1 Heart left.
+    if (humanWonRound && runState && runState.hearts === 1 && state.hands[0].length === 1) {
+      _achGrant('lastStand');
+    }
     log('Round result: ' + (humanWonRound ? 'WON' : 'LOST') +
         ' — ' + scoreLine());
     if (state._gildedRoundEarnings && state._gildedRoundEarnings > 0) {
       log('Gilded earned this round: +' + state._gildedRoundEarnings + 'g.');
+    }
+
+    // The Bookmark relic: end-of-round, offer to save 1 hand card into the
+    // run deck (replacing one). Optional, once per round, only if you still
+    // have at least one card in hand.
+    if (hasRelic('bookmark') && !runState.bookmarkUsedThisRound &&
+        state.hands[0] && state.hands[0].length > 0 &&
+        runState.runDeck && runState.runDeck.length > 0) {
+      runState.bookmarkUsedThisRound = true;
+      // Defer any modal interaction until after the round-result modal logic
+      // by queueing this micro-task. We don't block the natural flow.
+      setTimeout(() => {
+        try { _showBookmarkPicker(); } catch (e) {}
+      }, 0);
     }
 
     const leaderIdx = runState.roundsWon.findIndex(w => w >= ROUNDS_TO_WIN_FLOOR);
@@ -827,6 +1336,18 @@
       const floorBonus = addGold(GOLD_PER_FLOOR_WIN);
       log('Floor ' + runState.currentFloor + ' WON. +' + floorBonus +
           'g (now ' + runState.gold + 'g).');
+      // Speed Demon: floor cleared in under 2 minutes.
+      if (runState.ach && runState.ach.floorStartTimestamp) {
+        const elapsed = Date.now() - runState.ach.floorStartTimestamp;
+        if (elapsed < 120000) _achGrant('speedDemon');
+      }
+      // Tarnished Crown relic: clean-floor bonus.
+      if (hasRelic('tarnishedCrown') &&
+          typeof runState.floorStartHearts === 'number' &&
+          runState.hearts >= runState.floorStartHearts) {
+        const tcBonus = addGold(50);
+        log('Tarnished Crown: clean-floor bonus +' + tcBonus + 'g.');
+      }
     } else {
       runState.hearts--;
       log('Floor ' + runState.currentFloor + ' LOST to ' + winnerLabel +
@@ -843,6 +1364,8 @@
     if (humanWonFloor && runState.hearts === 1) {
       runState.heartShards = (runState.heartShards || 0) + 1;
       log('Heart shard earned! (' + runState.heartShards + '/' + HEART_SHARDS_REQUIRED + ')');
+      const total = _achAddProgress('heartShardsTotal', 1);
+      if (total >= 10) _achGrant('heartSurgeon');
       if (runState.heartShards >= HEART_SHARDS_REQUIRED) {
         runState.hearts++;
         runState.heartShards = 0;
@@ -855,19 +1378,44 @@
     ensureSoloJokerSlots(runState.currentFloor);
     runState.roundsWon = new Array(NUM_PLAYERS).fill(0);
     runState.loadedDieUsedThisFloor = false;  // Phase 7+: reset Loaded Die per floor
+    runState.floorLockedBoughtThisFloor = {};  // Reset floor-locked shop items
+    runState.lastWordUsedThisFloor = false;    // Last Word joker
+    runState.saboteurUsedThisFloor = false;    // Saboteur joker
+    runState.deadHandUsedThisFloor = false;    // Dead Hand joker
+    runState.carouserUsedThisFloor = { smokeBomb: false, counterfeit: false, jackBeNimble: false };
+    runState.pickpocketUsedThisFloor = false;  // Pickpocket consumable
+    runState.markedDeckUsedThisFloor = false;  // Marked Deck consumable
+    runState.emptyThreatUsedThisFloor = false; // Empty Threat consumable
+    runState.crackedMirrorUsedThisFloor = false; // Cracked Mirror relic
+    runState.floorStartHearts = runState.hearts; // Tarnished Crown reference point
+    if (runState.ach) runState.ach.floorStartTimestamp = Date.now(); // Speed Demon
     runState.tattletaleChargesThisFloor =
       hasJoker('tattletale') ? TATTLETALE_CHARGES_PER_FLOOR : 0;
     setMaxFloorReached(runState.currentFloor);
 
     // Phase 8+: pick floor modifier (Act 2+ only on non-boss floors)
     if (runState.currentFloor >= 4 && !isBossFloor(runState.currentFloor)) {
-      const ids = Object.keys(FLOOR_MODIFIERS);
-      runState.currentFloorModifier = ids[Math.floor(Math.random() * ids.length)];
+      if (runState.preRolledNextFloorMod && FLOOR_MODIFIERS[runState.preRolledNextFloorMod]) {
+        runState.currentFloorModifier = runState.preRolledNextFloorMod;
+        runState.preRolledNextFloorMod = null;
+      } else {
+        const ids = Object.keys(FLOOR_MODIFIERS);
+        runState.currentFloorModifier = ids[Math.floor(Math.random() * ids.length)];
+      }
     } else {
       runState.currentFloorModifier = null;
     }
     // Reassign personalities (so each floor feels different)
-    assignBotPersonalities();
+    if (Array.isArray(runState.preRolledNextFloorPersonalities) &&
+        runState.preRolledNextFloorPersonalities.length === NUM_PLAYERS - 1) {
+      runState.botPersonalities = [null].concat(runState.preRolledNextFloorPersonalities);
+      runState.preRolledNextFloorPersonalities = null;
+      // Boss override still applies if we're entering a boss floor.
+      const boss = getBoss(runState.currentFloor);
+      if (boss) runState.botPersonalities[1] = boss.id;
+    } else {
+      assignBotPersonalities();
+    }
 
     if (floorJustFinished >= TOTAL_FLOORS && humanWonFloor) {
       endRun(true);
@@ -878,9 +1426,107 @@
       return;
     }
 
+    // Track boss kills for the Boss Slayer achievement (Floor 9 alts).
+    if (humanWonFloor) {
+      const justFinished = floorJustFinished;
+      if (justFinished === 9) {
+        const f9 = runState.floor9BossId || 'lugen';
+        _achGrantBossKill(f9);
+        // Untouched: clear Lugen with all starting hearts intact.
+        if (f9 === 'lugen' && runState.hearts >= STARTING_HEARTS) {
+          _achGrant('untouched');
+        }
+      }
+    }
+    // Boss-relic pickup. After defeating a boss (Floor 3 / 6), offer the player
+    // 2 relics from that boss's pool. Floor 9 victory ends the run, so its
+    // relics (ironStomach / ledger) carry into the next run via meta-progression.
+    if (humanWonFloor && isBossFloor(floorJustFinished) && floorJustFinished < TOTAL_FLOORS) {
+      const bossId = (floorJustFinished === 3) ? 'auditor'
+                   : (floorJustFinished === 6) ? 'cheater'
+                   : null;
+      if (bossId && BOSS_RELIC_POOL[bossId]) {
+        showBossRelicPicker(bossId, () => {
+          showFork(floorJustFinished, humanWonFloor, winnerIdx, lastRoundMessage);
+        });
+        return;
+      }
+    }
+
     // Phase 3: skip the floor-result modal and go straight to the fork
     // screen, which has its own banner showing the floor outcome.
     showFork(floorJustFinished, humanWonFloor, winnerIdx, lastRoundMessage);
+  }
+
+  // Boss relic picker — lets the player choose 1 of 2 relics from a boss pool.
+  function showBossRelicPicker(bossId, onPicked) {
+    const pool = BOSS_RELIC_POOL[bossId] || [];
+    // Filter out relics the player already owns.
+    const owned = runState.relics || [];
+    const available = pool.filter(id => !owned.includes(id));
+    // If both pool entries are owned, fall back to any unowned relic from
+    // the catalog so the boss reward isn't wasted.
+    let offers;
+    if (available.length >= 2) {
+      offers = available.slice(0, 2);
+    } else if (available.length === 1) {
+      const others = Object.keys(RELIC_CATALOG).filter(id => !owned.includes(id) && !available.includes(id));
+      offers = available.concat(shuffle(others).slice(0, 1));
+    } else {
+      const others = Object.keys(RELIC_CATALOG).filter(id => !owned.includes(id));
+      offers = shuffle(others).slice(0, 2);
+    }
+
+    let modal = document.getElementById('betaBossRelicModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'betaBossRelicModal';
+      modal.className = 'fixed inset-0 bg-black/85 backdrop-blur z-50 flex items-center justify-center p-4';
+      modal.innerHTML =
+        '<div class="bg-gradient-to-br from-amber-700 via-yellow-700 to-amber-900 border-2 border-yellow-300 p-6 rounded-2xl shadow-2xl max-w-lg w-full">' +
+          '<h3 class="text-2xl font-extrabold mb-1 text-center">&#128081; Boss defeated</h3>' +
+          '<p id="betaBossRelicSubtitle" class="text-xs text-yellow-100 mb-4 text-center"></p>' +
+          '<div id="betaBossRelicOffers" class="space-y-2"></div>' +
+        '</div>';
+      document.body.appendChild(modal);
+    }
+    const boss = BOSS_CATALOG[bossId];
+    const subtitle = modal.querySelector('#betaBossRelicSubtitle');
+    if (subtitle) subtitle.textContent = (boss ? boss.name : 'Boss') + ' yields a relic. Pick one — the other is gone.';
+    const list = modal.querySelector('#betaBossRelicOffers');
+    list.innerHTML = '';
+    if (offers.length === 0) {
+      const note = document.createElement('p');
+      note.className = 'text-rose-200 text-center';
+      note.textContent = 'You already own every relic — nothing to pick.';
+      list.appendChild(note);
+      const ok = document.createElement('button');
+      ok.className = 'mt-4 w-full bg-yellow-400 hover:bg-yellow-300 text-black px-4 py-2 rounded font-bold transition';
+      ok.textContent = 'Continue';
+      ok.addEventListener('click', () => {
+        modal.classList.add('hidden');
+        if (typeof onPicked === 'function') onPicked();
+      });
+      list.appendChild(ok);
+    } else {
+      for (const id of offers) {
+        const r = RELIC_CATALOG[id];
+        if (!r) continue;
+        const btn = document.createElement('button');
+        btn.className = 'w-full bg-amber-800 hover:bg-amber-700 transition p-4 rounded-xl text-left';
+        btn.innerHTML = '<div class="text-xl font-bold mb-1">' + escapeHtml(r.name) + '</div>' +
+                        '<div class="text-xs opacity-80">' + escapeHtml(r.desc) + '</div>';
+        btn.addEventListener('click', () => {
+          runState.relics = runState.relics || [];
+          runState.relics.push(id);
+          log('Boss relic gained: ' + r.name + '!');
+          modal.classList.add('hidden');
+          if (typeof onPicked === 'function') onPicked();
+        });
+        list.appendChild(btn);
+      }
+    }
+    modal.classList.remove('hidden');
   }
 
   function heartsString(h) {
@@ -1018,18 +1664,51 @@
     for (let i = 0; i < playerBonus; i++) {
       if (deck.length > 0) hands[0].push(deck.pop());
     }
+    // Lugen specials: starts with 7 cards (2 extra) instead of 5.
+    if (runState && runState.botPersonalities) {
+      for (let p = 1; p < NUM_PLAYERS; p++) {
+        if (runState.botPersonalities[p] === 'lugen') {
+          for (let i = 0; i < 2; i++) {
+            if (deck.length > 0) hands[p].push(deck.pop());
+          }
+        }
+      }
+    }
     return { hands, drawPile: deck };
   }
 
-  function applyJackFairness(hands, drawPile) {
+  // Jack limit for a given seat. Player 0 (human) gets character / joker
+  // bonuses; bots default to 4 except Lugen (6). Greedy modifier knocks
+  // 1 off everybody.
+  function _humanSteelCount() {
+    if (!state || !state.hands || !state.hands[0]) return 0;
+    return state.hands[0].filter(c => c.affix === 'steel').length;
+  }
+  function jackLimitFor(p) {
     const playerLimitBonus = (runState && runState.character && runState.character.jackLimitBonus) || 0;
-    const playerJokerBonus = hasJoker('safetyNet') ? 1 : 0;
+    const playerJokerBonus = (p === 0 && hasJoker('safetyNet')) ? 1 : 0;
     const greedyDrop = (runState && runState.currentFloorModifier === 'greedy') ? 1 : 0;
+    let limit = JACK_LIMIT;
+    if (p === 0) {
+      limit += playerLimitBonus + playerJokerBonus;
+      // Dragon Scale: +1 Jack limit per Steel card in hand.
+      if (hasRelic('dragonScale')) limit += _humanSteelCount();
+    }
+    if (runState && runState.botPersonalities && runState.botPersonalities[p] === 'lugen') {
+      limit = 6;
+    }
+    return limit - greedyDrop;
+  }
+
+  function applyJackFairness(hands, drawPile) {
     for (let p = 0; p < hands.length; p++) {
       const hand = hands[p];
-      const limit = JACK_LIMIT + (p === 0 ? (playerLimitBonus + playerJokerBonus) : 0) - greedyDrop;
-      while (countJacks(hand) >= limit) {
-        const jackIdx = hand.findIndex(c => c.rank === 'J');
+      const limit = jackLimitFor(p);
+      while (jackCurseWeight(hand) >= limit) {
+        // Prefer evicting a Steel Jack (weight 2) to bring weight down faster,
+        // otherwise any plain Jack will do.
+        let jackIdx = hand.findIndex(c => c.rank === 'J' && c.affix === 'steel');
+        if (jackIdx === -1) jackIdx = hand.findIndex(c => c.rank === 'J');
         const replIdx = drawPile.findIndex(c => c.rank !== 'J');
         if (jackIdx === -1 || replIdx === -1) break;
         const jack = hand.splice(jackIdx, 1)[0];
@@ -1042,6 +1721,22 @@
 
   function countJacks(hand) {
     return hand.filter(c => c.rank === 'J').length;
+  }
+
+  // Jack-curse weight: each card contributes 1 toward the curse, except
+  // Steel Jacks which contribute 2 per the design. Joker's Mask consumable
+  // can also tag a non-Jack to count as 1 toward the curse for that round.
+  function jackCurseWeight(hand) {
+    let w = 0;
+    const maskedId = (state && state.jokersMaskCardId) || null;
+    for (const c of hand) {
+      if (c.rank === 'J') {
+        w += (c.affix === 'steel') ? 2 : 1;
+      } else if (maskedId && c.id === maskedId) {
+        w += 1;
+      }
+    }
+    return w;
   }
 
   // ============================================================
@@ -1080,9 +1775,18 @@
   // If a Counterfeit lock is active, the rotation is suppressed once and
   // the target carries over into the next play cycle.
   function rotateTargetRank() {
+    if (runState && runState.currentFloorModifier === 'inverted') {
+      // Target stays at J for the entire Inverted round — no rotation at all.
+      return;
+    }
     if (state.counterfeitLock) {
       log('Counterfeit lock holds — target stays ' + state.targetRank + '.');
       state.counterfeitLock = false;
+      return;
+    }
+    if (state.snakeEyesLock) {
+      log('Snake Eyes — target stays ' + state.targetRank + ' for one more cycle.');
+      state.snakeEyesLock = false;
       return;
     }
     const candidates = RANKS.filter(r => r !== state.targetRank);
@@ -1094,8 +1798,16 @@
   function playCards(playerIdx, cardIds) {
     if (state.gameOver || state.challengeOpen) return;
     const dtArmed = playerIdx === 0 && state.doubletalkArmed;
-    const minCards = dtArmed ? 2 : 1;
-    const maxCards = dtArmed ? 4 : 3;
+    const dgArmed = playerIdx === 0 && state.doppelArmed && state.lastPlay;
+    const hpArmed = playerIdx === 0 && state.hotPotatoArmed;
+    let minCards = dtArmed ? 2 : 1;
+    let maxCards = dtArmed ? 4 : 3;
+    if (hpArmed && !dtArmed) maxCards = 5;
+    if (dgArmed) {
+      // Doppelganger forces the count to match the previous play exactly.
+      minCards = state.lastPlay.count;
+      maxCards = state.lastPlay.count;
+    }
     if (cardIds.length < minCards || cardIds.length > maxCards) return;
 
     const hand = state.hands[playerIdx];
@@ -1103,7 +1815,24 @@
       .map(id => hand.find(c => c.id === id))
       .filter(Boolean);
     if (cards.length !== cardIds.length) return;
+    // Cursed-lock: cards just picked up can't be played for N turns.
+    if (playerIdx === 0) {
+      const stillLocked = cards.find(c => c.cursedLockTurns && c.cursedLockTurns > 0);
+      if (stillLocked) {
+        log('A Cursed card is still locked (' + stillLocked.cursedLockTurns + ' turn(s) left).');
+        return;
+      }
+    }
 
+    // Cracked Mirror: snapshot the human's pre-play state so the relic can
+    // rewind it after the challenge resolves. Only snap on human plays.
+    if (playerIdx === 0 && hasRelic('crackedMirror') && !runState.crackedMirrorUsedThisFloor) {
+      state._mirrorSnapshot = {
+        prevHand: state.hands[0].slice(),
+        playedIds: cardIds.slice(),
+        prevPileLen: state.pile.length,
+      };
+    }
     state.hands[playerIdx] = hand.filter(c => !cardIds.includes(c.id));
     for (const c of cards) {
       state.pile.push({
@@ -1120,16 +1849,45 @@
       const peeked = cards[0];
       state.echoArmedFor = -1;
       if (peeker === 0) {
-        log("Echo's eye: " + playerLabel(playerIdx) + "'s first card is a " +
+        privatePeek("Echo's eye: " + playerLabel(playerIdx) + "'s first card is a " +
             peeked.rank + (peeked.affix ? ' (' + peeked.affix + ')' : '') + '.');
       }
     }
 
+    // Doppelganger override: claim is forced to the previous play's claim
+    // (so even if the target has rotated, we mimic the prior turn). Consumed
+    // here once it actually gets used.
+    let _claimOverride = null;
+    if (playerIdx === 0 && state.doppelArmed && state.lastPlay) {
+      _claimOverride = state.lastPlay.claim;
+      // Re-stamp the pile entries we just pushed with the override claim.
+      for (let i = state.pile.length - cards.length; i < state.pile.length; i++) {
+        if (i >= 0 && state.pile[i]) state.pile[i].claim = _claimOverride;
+      }
+      state.doppelArmed = false;
+      state.doppelUsedThisRound = true;
+      log('Doppelganger: your play mimics the previous (' + cards.length + ' x ' + _claimOverride + ').');
+    }
+    // Consume Hot Potato (single use after the bonus play).
+    if (playerIdx === 0 && state.hotPotatoArmed) {
+      state.hotPotatoArmed = false;
+    }
     state.lastPlay = {
       playerIdx,
       count: cards.length,
-      claim: state.targetRank,
+      claim: _claimOverride || state.targetRank,
     };
+
+    // Track human's most recent play for Mimic personality + The Mirror boss.
+    if (playerIdx === 0) {
+      const wasBluff = !cards.every(c => c.rank === state.targetRank || c.affix === 'mirage');
+      state.lastHumanPlay = {
+        count: cards.length,
+        claim: state.targetRank,
+        wasBluff: wasBluff,
+      };
+      if (wasBluff) state.humanLiesThisRound = (state.humanLiesThisRound || 0) + 1;
+    }
 
     log(playerLabel(playerIdx) + ' plays ' + cards.length +
         (cards.length === 1 ? ' card' : ' cards') +
@@ -1165,13 +1923,14 @@
     if (cards.some(c => c.affix === 'echo')) {
       state.echoArmedFor = playerIdx;
     }
-    // Phase 7+: Eavesdropper — fires when previous player (NUM_PLAYERS-1) plays
+    // Phase 7+: Eavesdropper — fires when previous player (NUM_PLAYERS-1) plays.
+    // Note: human is always seat 0 in solo, so this is the seat just before us.
     if (playerIdx === ((NUM_PLAYERS - 1) % NUM_PLAYERS) && hasJoker('eavesdropper') &&
         runState && (totalRoundsPlayed() - (runState.eavesdropperLastFiredRound !== undefined
           ? runState.eavesdropperLastFiredRound : -99)) >= 2) {
       const matches = state.hands[playerIdx].filter(c => c.rank === state.targetRank).length;
       const bucket = matches === 0 ? 'NONE' : (matches <= 2 ? 'SOME (1-2)' : 'MANY (3+)');
-      log('Eavesdropper: ' + playerLabel(playerIdx) + ' has ' + bucket + ' matches for ' + state.targetRank + '.');
+      privatePeek('Eavesdropper: ' + playerLabel(playerIdx) + ' has ' + bucket + ' matches for ' + state.targetRank + '.');
       runState.eavesdropperLastFiredRound = totalRoundsPlayed();
     }
 
@@ -1179,10 +1938,24 @@
       state.doubletalkArmed = false;
       state.doubletalkUsedThisRound = true;
     }
+    // Empty Hand: emptied hand on the very first turn of the round.
+    if (playerIdx === 0 && state.humanFirstTurn) {
+      if (state.hands[0].length === 0) _achGrant('emptyHand');
+      state.humanFirstTurn = false;
+    }
 
     selected.clear();
     openChallengeWindow(playerIdx);
     render();
+  }
+
+  // Find Lugen's seat index, or -1 if Lugen isn't at the table.
+  function findLugenSeat() {
+    if (!runState || !runState.botPersonalities) return -1;
+    for (let i = 0; i < runState.botPersonalities.length; i++) {
+      if (runState.botPersonalities[i] === 'lugen') return i;
+    }
+    return -1;
   }
 
   function openChallengeWindow(playerIdx) {
@@ -1190,6 +1963,28 @@
     if (challenger === -1) {
       handlePassNoChallenge(playerIdx);
       return;
+    }
+
+    // Lugen specials: once per round, Lugen can call Liar out-of-turn.
+    // We only consider the override when Lugen is alive and isn't already
+    // the natural challenger (otherwise their normal turn handles it).
+    const lugenIdx = findLugenSeat();
+    if (lugenIdx >= 0 && lugenIdx !== playerIdx && lugenIdx !== challenger &&
+        !state.eliminated[lugenIdx] && !state.finished[lugenIdx] &&
+        !state.lugenLiarUsedThisRound) {
+      // Lugen is more interested when more cards were claimed (bigger lies
+      // are juicier). Modest base rate so this isn't always burned on play 1.
+      const lp = state.lastPlay;
+      const base = lp && lp.count === 3 ? 0.45 : lp && lp.count === 2 ? 0.30 : 0.18;
+      if (Math.random() < base) {
+        state.lugenLiarUsedThisRound = true;
+        log('Lugen interrupts! Out-of-turn Liar call.');
+        // Skip the natural challenge window — go straight to the call.
+        state.challengeOpen = true;
+        state.challengerIdx = lugenIdx;
+        callLiar(lugenIdx);
+        return;
+      }
     }
 
     state.challengeOpen = true;
@@ -1208,6 +2003,19 @@
     // Phase 7+: Pocket Watch relic — +5s for the human's window
     if (challenger === 0 && hasRelic('pocketWatch')) {
       windowMs += 5000;
+    }
+    // The Hourglass relic: +4s for the human; bots without it have -30% window.
+    if (hasRelic('hourglass')) {
+      if (challenger === 0) {
+        windowMs += 4000;
+      } else {
+        // bots don't hold relics in solo, so they always get the cut
+        windowMs = Math.max(1500, Math.floor(windowMs * 0.70));
+      }
+    }
+    // Rapid floor modifier: challenge windows clamp to 2 seconds for everyone.
+    if (runState && runState.currentFloorModifier === 'rapid') {
+      windowMs = 2000;
     }
 
     document.getElementById('betaChallengeBar').classList.remove('hidden');
@@ -1234,27 +2042,9 @@
     }
   }
 
-  function handlePassNoChallenge(lastPlayerIdx) {
-    state.challengeOpen = false;
-    state.challengerIdx = -1;
-    clearAllTimers();
-    document.getElementById('betaChallengeBar').classList.add('hidden');
-
-    // Phase 5: Black Hole — successful Jack bluff lets you delete one non-Jack.
-    if (lastPlayerIdx === 0 && hasJoker('blackHole') && state.lastPlay) {
-      const lp = state.lastPlay;
-      const justPlayed = state.pile.slice(-lp.count);
-      const playedJack = justPlayed.some(c => c.rank === 'J');
-      if (playedJack) {
-        const nonJackIdx = state.hands[0].findIndex(c => c.rank !== 'J');
-        if (nonJackIdx >= 0) {
-          const removed = state.hands[0].splice(nonJackIdx, 1)[0];
-          log('Black Hole: deleted ' + removed.rank +
-              ' from your hand (Jack bluff success).');
-        }
-      }
-    }
-
+  // Continue the turn-advance after a no-challenge resolution. Split out
+  // so the Black Hole picker can defer it until after the player picks.
+  function _continueAfterPass(lastPlayerIdx) {
     if (!state.eliminated[lastPlayerIdx] &&
         state.hands[lastPlayerIdx].length === 0) {
       markFinished(lastPlayerIdx);
@@ -1268,8 +2058,95 @@
     }
   }
 
+  function handlePassNoChallenge(lastPlayerIdx) {
+    state.challengeOpen = false;
+    state.challengerIdx = -1;
+    clearAllTimers();
+    document.getElementById('betaChallengeBar').classList.add('hidden');
+
+    // Phase 5: Black Hole — successful Jack bluff lets the player CHOOSE
+    // one non-Jack card to delete from hand. Open a picker; resume turn
+    // flow once they pick (or skip).
+    if (lastPlayerIdx === 0 && hasJoker('blackHole') && state.lastPlay) {
+      const lp = state.lastPlay;
+      const justPlayed = state.pile.slice(-lp.count);
+      const playedJack = justPlayed.some(c => c.rank === 'J');
+      const nonJacks = state.hands[0].filter(c => c.rank !== 'J');
+      if (playedJack && nonJacks.length > 0) {
+        openBlackHolePicker(() => _continueAfterPass(lastPlayerIdx));
+        return;
+      }
+    }
+
+    _continueAfterPass(lastPlayerIdx);
+  }
+
+  // Black Hole picker — let the player click a non-Jack card to delete.
+  // "Skip" is also valid (don't have to use the trigger).
+  function openBlackHolePicker(onClose) {
+    let modal = document.getElementById('betaBlackHoleModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'betaBlackHoleModal';
+      modal.className = 'fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4';
+      modal.innerHTML =
+        '<div class="bg-slate-800 border-2 border-purple-400 p-6 rounded-2xl shadow-2xl max-w-lg w-full">' +
+          '<h3 class="text-xl font-bold mb-1 text-center">&#127769; Black Hole</h3>' +
+          '<p class="text-xs text-emerald-200 mb-3 text-center">Successful Jack bluff! Pick a non-Jack to delete from your hand, or skip.</p>' +
+          '<div id="betaBlackHoleCards" class="flex flex-wrap gap-2 justify-center mb-4"></div>' +
+          '<div class="text-center"><button id="betaBlackHoleSkipBtn" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg text-sm">Skip</button></div>' +
+        '</div>';
+      document.body.appendChild(modal);
+    }
+    const cardsDiv = modal.querySelector('#betaBlackHoleCards');
+    cardsDiv.innerHTML = '';
+    const order = ['A', 'K', 'Q', '10', 'J'];
+    const sorted = state.hands[0].slice().sort((a, b) => {
+      const ai = order.indexOf(a.rank), bi = order.indexOf(b.rank);
+      if (ai !== bi) return ai - bi;
+      return a.id.localeCompare(b.id);
+    });
+    for (const c of sorted) {
+      if (c.rank === 'J') continue;  // can't delete Jacks
+      const btn = document.createElement('button');
+      let cls = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded cursor-pointer hover:scale-105 transition';
+      const ring = affixRingClass(c.affix);
+      if (ring) cls += ' ' + ring;
+      else if (c.owner === 0) cls += ' ring-2 ring-emerald-400';
+      btn.className = cls;
+      btn.textContent = c.rank;
+      if (c.affix) btn.title = 'Affix: ' + c.affix;
+      const cid = c.id;
+      btn.addEventListener('click', () => {
+        const idx = state.hands[0].findIndex(h => h.id === cid);
+        if (idx >= 0) {
+          const removed = state.hands[0].splice(idx, 1)[0];
+          log('Black Hole: deleted ' + removed.rank +
+              (removed.affix ? ' [' + removed.affix + ']' : '') +
+              ' from your hand (Jack bluff success).');
+        }
+        modal.classList.add('hidden');
+        if (typeof onClose === 'function') onClose();
+      });
+      cardsDiv.appendChild(btn);
+    }
+    const skipBtn = modal.querySelector('#betaBlackHoleSkipBtn');
+    // Replace the skip button to clear old listeners
+    const freshSkip = skipBtn.cloneNode(true);
+    skipBtn.parentNode.replaceChild(freshSkip, skipBtn);
+    freshSkip.addEventListener('click', () => {
+      log('Black Hole: skipped.');
+      modal.classList.add('hidden');
+      if (typeof onClose === 'function') onClose();
+    });
+    modal.classList.remove('hidden');
+  }
+
   function callLiar(challengerIdx) {
     if (!state.challengeOpen || !state.lastPlay) return;
+    if (challengerIdx === 0 && runState && runState.ach) {
+      runState.ach.liarCalls = (runState.ach.liarCalls || 0) + 1;
+    }
     state.challengeOpen = false;
     clearAllTimers();
     document.getElementById('betaChallengeBar').classList.add('hidden');
@@ -1283,8 +2160,19 @@
 
     const lp = state.lastPlay;
     const playedCards = state.pile.slice(-lp.count);
+    // Trickster joker (human-only): one card per round can be a +/-1 wildcard.
+    // It counts as truth if its rank is one step away from the claim on the
+    // rank ladder A > K > Q > 10 > J. Cleared at end of round.
+    const _RANK_ORDER = ['J', '10', 'Q', 'K', 'A'];
+    function _tricksterMatch(card, claim) {
+      if (!state.tricksterMarkedId || card.id !== state.tricksterMarkedId) return false;
+      const ci = _RANK_ORDER.indexOf(card.rank);
+      const ti = _RANK_ORDER.indexOf(claim);
+      if (ci < 0 || ti < 0) return false;
+      return Math.abs(ci - ti) === 1;
+    }
     // Phase 5: Mirage cards count as matching the claim (one-time wildcard)
-    const allMatch = playedCards.every(c => c.rank === lp.claim || c.affix === 'mirage');
+    const allMatch = playedCards.every(c => c.rank === lp.claim || c.affix === 'mirage' || _tricksterMatch(c, lp.claim));
 
     log(playerLabel(challengerIdx) + ' calls LIAR on ' +
         playerLabel(lp.playerIdx) + '!');
@@ -1323,9 +2211,18 @@
         }
         if (burnedThisTrigger.length > 0) {
           log('Glass burns ' + burnedThisTrigger.length + ' cards from the pile.');
+          // Glass Cannon: cumulative across runs.
+          const total = _achAddProgress('glassBurned', burnedThisTrigger.length);
+          if (total >= 100) _achGrant('glassCannon');
           state.burnedCards.push(...burnedThisTrigger);
-          // Burn cap check: if total exceeds cap, recycle all burned -> draw pile
-          if (state.burnedCards.length > BURN_CAP) {
+          // Burn cap check: if total exceeds cap, recycle all burned -> draw pile.
+          // The Witch character: their Glass burns don't trigger the recycle —
+          // we just don't track their burns toward the cap.
+          const witchOn = !!(runState.character && runState.character.witchUncappedGlass);
+          if (witchOn) {
+            // Witch ignores the burn cap entirely.
+            state.burnedCards = [];
+          } else if (state.burnedCards.length > BURN_CAP) {
             const recycled = state.burnedCards.length;
             state.drawPile = shuffle(state.drawPile.concat(state.burnedCards));
             state.burnedCards = [];
@@ -1336,8 +2233,75 @@
 
       const doSpikedDraws = (takerIdx) => {
         const spikedCount = state.pile.filter(c => c.affix === 'spiked').length;
-        for (const c of state.pile) {
-          state.hands[takerIdx].push({ rank: c.rank, id: c.id, owner: c.owner, affix: c.affix });
+        const pileSnapshot = state.pile.slice();
+        // Magpie joker (held by HUMAN): when an opponent takes a pile, gain 1g
+        // per affixed card in it. Doesn't fire when the human takes the pile.
+        if (takerIdx !== 0 && hasJoker('magpie')) {
+          const affixed = pileSnapshot.filter(c => c.affix).length;
+          if (affixed > 0) {
+            const got = addGold(affixed);
+            log('Magpie: ' + playerLabel(takerIdx) + ' picks up ' + affixed + ' affixed card(s). +' + got + 'g.');
+          }
+        }
+        // Dead Hand joker (HUMAN only, once per floor): the first 2 Jacks in a
+        // pile you take don't join your hand; they go to the bottom of the
+        // draw pile instead.
+        let deadHandJackIds = new Set();
+        if (takerIdx === 0 && hasJoker('deadHand') && runState && !runState.deadHandUsedThisFloor) {
+          let kept = 0;
+          for (const c of pileSnapshot) {
+            if (c.rank !== 'J') continue;
+            if (kept >= 2) break;
+            deadHandJackIds.add(c.id);
+            kept++;
+          }
+          if (kept > 0) {
+            runState.deadHandUsedThisFloor = true;
+            log('Dead Hand: ' + kept + ' Jack(s) stay out of your hand and slide under the draw pile.');
+          }
+        }
+        // Ricochet joker (HUMAN only): if the pile has 3+ Jacks, half (rounded
+        // down) get bounced to a random active opponent instead of joining
+        // your hand. Excludes Dead-Hand-held Jacks from the count.
+        let ricochetIds = new Set();
+        let ricochetTarget = -1;
+        if (takerIdx === 0 && hasJoker('ricochet')) {
+          const eligibleJacks = pileSnapshot.filter(c => c.rank === 'J' && !deadHandJackIds.has(c.id));
+          if (eligibleJacks.length >= 3) {
+            const bounceN = Math.floor(eligibleJacks.length / 2);
+            const targets = [];
+            for (let i = 1; i < NUM_PLAYERS; i++) {
+              if (!state.eliminated[i] && !state.finished[i]) targets.push(i);
+            }
+            if (targets.length > 0) {
+              ricochetTarget = targets[Math.floor(Math.random() * targets.length)];
+              for (let i = 0; i < bounceN; i++) {
+                ricochetIds.add(eligibleJacks[i].id);
+              }
+            }
+          }
+        }
+        // Tag Cursed cards with a turn lock as they get picked up.
+        // Steel Spine relic shortens the lock from 2 to 1.
+        const cursedLockTurns = hasRelic('steelSpine') ? 1 : 2;
+        // Distribute pile cards.
+        for (const c of pileSnapshot) {
+          const card = { rank: c.rank, id: c.id, owner: c.owner, affix: c.affix };
+          if (card.affix === 'cursed' && takerIdx === 0) {
+            card.cursedLockTurns = cursedLockTurns;
+          }
+          if (deadHandJackIds.has(c.id)) {
+            // To bottom of draw pile (unshift puts it at the start, which is
+            // the bottom of the popped stack).
+            state.drawPile.unshift(card);
+          } else if (ricochetIds.has(c.id) && ricochetTarget >= 0) {
+            state.hands[ricochetTarget].push(card);
+          } else {
+            state.hands[takerIdx].push(card);
+          }
+        }
+        if (ricochetIds.size > 0 && ricochetTarget >= 0) {
+          log('Ricochet: ' + ricochetIds.size + ' Jack(s) bounce into ' + playerLabel(ricochetTarget) + '\'s hand.');
         }
         state.pile = [];
         let drawn = 0;
@@ -1350,9 +2314,28 @@
         if (drawn > 0) {
           log(playerLabel(takerIdx) + ' draws ' + drawn + ' from draw pile (Spiked).');
         }
+        // Hot Potato joker (HUMAN only): picking up 5+ cards arms the bonus
+        // for the next play (max play = 5 instead of 3). Counted on the
+        // pile size before pickup.
+        if (takerIdx === 0 && hasJoker('hotPotato') && pileSnapshot.length >= 5) {
+          state.hotPotatoArmed = true;
+          log('Hot Potato: next play allows up to 5 cards.');
+        }
+        // Memorizer joker — log pile contents privately for the joker holder
+        // (the human). Fires on any pile reveal where the pile lands somewhere.
+        if (hasJoker('memorizer') && pileSnapshot.length > 0) {
+          state.memorizerLog = state.memorizerLog || [];
+          for (const c of pileSnapshot) {
+            state.memorizerLog.push({ rank: c.rank, affix: c.affix || null, claim: c.claim || null });
+          }
+        }
       };
 
       if (allMatch) {
+        if (lp.playerIdx === 0 && runState && runState.ach) {
+          runState.ach.truthSurvivals = (runState.ach.truthSurvivals || 0) + 1;
+          if (runState.ach.truthSurvivals >= 10) _achGrant('truthWins');
+        }
         const _truthPileSize = state.pile.length;
         log('Truth told. ' + playerLabel(challengerIdx) +
             ' takes the pile (' + _truthPileSize + ' cards) and is skipped.');
@@ -1393,18 +2376,43 @@
           setTimeout(botTurn, BOT_TURN_DELAY_MS);
         }
       } else {
-        // Phase 7+: Scapegoat — Jacks routed to challenger
+        // Last Word joker (HUMAN only, once per floor): when you're caught
+        // lying you can veto the result. The pile flips to the challenger
+        // (truth ruling) and the round continues. You can't veto if the
+        // played cards emptied your hand (since the round was about to end).
+        if (lp.playerIdx === 0 && hasJoker('lastWord') && runState && !runState.lastWordUsedThisFloor) {
+          const emptiedHand = state.hands[0].length === 0;
+          if (!emptiedHand) {
+            runState.lastWordUsedThisFloor = true;
+            log('Last Word: you veto the call. Pile goes to ' + playerLabel(challengerIdx) + ' (treated as truth).');
+            doSpikedDraws(challengerIdx);
+            if (checkJackCurse(challengerIdx)) return;
+            rotateTargetRank();
+            advanceTurn(challengerIdx);
+            render();
+            if (!state.gameOver && state.currentTurn !== 0) {
+              setTimeout(botTurn, BOT_TURN_DELAY_MS);
+            }
+            return;
+          } else {
+            log('Last Word would have triggered, but the play emptied your hand — no veto.');
+          }
+        }
+        // Phase 7+: Scapegoat — *one* Jack routed to challenger (per design,
+        // not all of them — that was strictly stronger).
         if (lp.playerIdx === 0 && hasJoker('scapegoat')) {
           const playedJackIds = playedCards.filter(c => c.rank === 'J').map(c => c.id);
           if (playedJackIds.length > 0) {
-            const jacksInPile = state.pile.filter(c => playedJackIds.includes(c.id));
-            state.pile = state.pile.filter(c => !playedJackIds.includes(c.id));
-            for (const c of jacksInPile) {
-              state.hands[challengerIdx].push({ rank: c.rank, id: c.id, owner: c.owner, affix: c.affix });
+            const targetId = playedJackIds[0];
+            const jackPileIdx = state.pile.findIndex(c => c.id === targetId);
+            if (jackPileIdx >= 0) {
+              const jack = state.pile.splice(jackPileIdx, 1)[0];
+              state.hands[challengerIdx].push({ rank: jack.rank, id: jack.id, owner: jack.owner, affix: jack.affix });
+              log('Scapegoat: 1 Jack routed to ' + playerLabel(challengerIdx) + ' (the rest stays with the pile).');
             }
-            log('Scapegoat: ' + jacksInPile.length + ' Jack(s) routed to ' + playerLabel(challengerIdx) + '.');
           }
         }
+        if (lp.playerIdx === 0) state.humanCaughtThisRound = true;
         const _liePileSize = state.pile.length;
         log('Lie caught! ' + playerLabel(lp.playerIdx) +
             ' takes the pile (' + _liePileSize + ' cards). ' +
@@ -1428,22 +2436,39 @@
   }
 
   function checkJackCurse(playerIdx) {
-    let bonus = (playerIdx === 0 && runState && runState.character)
-                 ? (runState.character.jackLimitBonus || 0) : 0;
-    if (playerIdx === 0 && hasJoker('safetyNet')) bonus += 1;
-    let limit = JACK_LIMIT + bonus;
-    if (runState && runState.currentFloorModifier === 'greedy') limit -= 1;
+    // Old Soldier event: human is immune to the Jack curse for one round.
+    if (playerIdx === 0 && runState && runState.oldSoldierImmuneNextRound) {
+      // Active flag persists for the round; we'll clear it at endRound.
+      const limit = jackLimitFor(playerIdx);
+      const weight = jackCurseWeight(state.hands[playerIdx]);
+      if (weight >= limit) {
+        log("The Old Soldier shields you — Jack curse skipped this round.");
+      }
+      return false;
+    }
+    const limit = jackLimitFor(playerIdx);
+    const weight = jackCurseWeight(state.hands[playerIdx]);
     const jacks = countJacks(state.hands[playerIdx]);
-    if (jacks >= limit) {
-      log(playerLabel(playerIdx) + ' has ' + jacks +
-          ' Jacks — eliminated by the Jack curse!');
+    if (weight >= limit) {
+      const detail = (weight !== jacks)
+        ? jacks + ' Jacks (weight ' + weight + ', Steel Jacks count double)'
+        : jacks + ' Jacks';
+      log(playerLabel(playerIdx) + ' has ' + detail +
+          ' — eliminated by the Jack curse!');
       state.eliminated[playerIdx] = true;
+      // Vengeful Spirit (Legendary): when the human is taken by the Jack
+      // curse, drag the next active player into next round with 2 forced
+      // Jacks. We don't kill them in this round (that would auto-end and
+      // override the natural placement winner); instead the penalty carries
+      // forward as a hand handicap. This is the closest solo equivalent of
+      // the design's "they lose a Heart" — bots don't have Hearts.
       if (playerIdx === 0 && hasJoker('vengefulSpirit')) {
         for (let i = 1; i < NUM_PLAYERS; i++) {
           const target = (playerIdx + i) % NUM_PLAYERS;
           if (!state.eliminated[target] && !state.finished[target]) {
-            state.eliminated[target] = true;
-            log('Vengeful Spirit: ' + playerLabel(target) + ' is dragged down with you!');
+            runState.vengefulNextRoundTargets = runState.vengefulNextRoundTargets || [];
+            runState.vengefulNextRoundTargets.push(target);
+            log('Vengeful Spirit: ' + playerLabel(target) + ' will start the next round with 2 forced Jacks.');
             break;
           }
         }
@@ -1537,29 +2562,97 @@
     const pers = persId
       ? (PERSONALITY_CATALOG[persId] || BOSS_CATALOG[persId] || null)
       : null;
-    const bluffRate = pers ? pers.bluffRate : 0.30;
 
+    // Personality-specific bluff rate. Replaces the previous "fixed pers.bluffRate"
+    // for personalities that should react to game state instead of rolling a die.
+    let bluffRate = pers ? pers.bluffRate : 0.30;
     const target = state.targetRank;
     const matching = hand.filter(c => c.rank === target);
     const nonMatching = hand.filter(c => c.rank !== target);
+    const myJacks = countJacks(hand);
+    const limit = jackLimitFor(botIdx);
 
-    // Phase 8+: bluff if matching available AND personality bluffs OR forced
-    const willBluff = (matching.length === 0) || (Math.random() < bluffRate);
-    const truthful = !willBluff && matching.length > 0;
-    let cardsToPlay;
-    if (truthful) {
-      const max = Math.min(3, matching.length);
-      const count = 1 + Math.floor(Math.random() * max);
-      cardsToPlay = matching.slice(0, count);
-    } else {
-      const max = Math.min(3, hand.length);
-      const count = 1 + Math.floor(Math.random() * max);
-      const pool = nonMatching.length >= count ? shuffle(nonMatching) : shuffle(hand);
-      cardsToPlay = pool.slice(0, count);
+    if (persId === 'methodical') {
+      // Math-aware: only bluffs when conditions are favorable.
+      // - few Jacks held (<= limit-3 means a comfy buffer)
+      // - lots of matching cards in hand (>= 2)
+      // Otherwise plays truth if possible, else minimum-risk bluff.
+      const safeJacks = myJacks <= Math.max(0, limit - 3);
+      const goodHand = matching.length >= 2;
+      bluffRate = (safeJacks && goodHand) ? 0.65 : 0.10;
+    } else if (persId === 'mimic') {
+      // Copy the human's most recent play type. If they last bluffed, this
+      // bot bluffs; if they told the truth (or haven't played), it plays it safe.
+      if (state.lastHumanPlay && state.lastHumanPlay.wasBluff) {
+        bluffRate = 0.80;
+      } else if (state.lastHumanPlay) {
+        bluffRate = 0.10;
+      } else {
+        bluffRate = 0.40;
+      }
+    } else if (persId === 'wildcard') {
+      // Genuinely random — re-roll the bluff rate every single play.
+      bluffRate = Math.random();
+    }
+    // Empty Threat: a single feint cools the next bot's bluff rate.
+    if (state.emptyThreatPending) {
+      bluffRate = Math.max(0.05, bluffRate - 0.40);
+      state.emptyThreatPending = false;
+      log('[Tell] ' + playerLabel(botIdx) + ' eyes you warily — your fake call worked.');
     }
 
-    // Phase 8+: tell — log a personality cue if Acts 1-2 and tells visible
-    if (pers && pers.tell && shouldShowTells() && Math.random() < (getCurrentAct() === 1 ? 0.7 : 0.35)) {
+    let cardsToPlay = null;
+
+    // The Mirror boss copies whatever the human played last turn — same count,
+    // same claim. If the human hasn't played yet, fall back to normal AI.
+    if (persId === 'mirror' && state.lastHumanPlay) {
+      const wantCount = Math.min(state.lastHumanPlay.count, hand.length, 3);
+      // Prefer honest matches, but if not enough, pad with anything.
+      const honestPicks = matching.slice(0, wantCount);
+      const padCount = wantCount - honestPicks.length;
+      const padPool = shuffle(nonMatching);
+      cardsToPlay = honestPicks.concat(padPool.slice(0, padCount));
+      if (cardsToPlay.length === 0) cardsToPlay = shuffle(hand).slice(0, 1);
+    }
+
+    if (!cardsToPlay) {
+      // Phase 8+: bluff if no matching available, else roll bluffRate
+      const willBluff = (matching.length === 0) || (Math.random() < bluffRate);
+      const truthful = !willBluff && matching.length > 0;
+      if (truthful) {
+        const max = Math.min(3, matching.length);
+        const count = 1 + Math.floor(Math.random() * max);
+        cardsToPlay = matching.slice(0, count);
+      } else {
+        const max = Math.min(3, hand.length);
+        const count = 1 + Math.floor(Math.random() * max);
+        const pool = nonMatching.length >= count ? shuffle(nonMatching) : shuffle(hand);
+        cardsToPlay = pool.slice(0, count);
+      }
+    }
+
+    // Lugen specials: every card it plays is randomly affixed (overwriting
+    // existing affixes). This makes Lugen's plays unpredictable and uses the
+    // full reveal-time affix kit every turn.
+    if (persId === 'lugen') {
+      const lugenAffixes = ['gilded', 'glass', 'spiked', 'cursed', 'steel', 'mirage', 'hollow', 'echo'];
+      for (const c of cardsToPlay) {
+        c.affix = lugenAffixes[Math.floor(Math.random() * lugenAffixes.length)];
+      }
+    }
+
+    // Phase 8+: tell — fire only when the play is actually deceptive (or for
+    // Wildcard, fire on any play because its inconsistency IS the lesson).
+    const isBluff = !cardsToPlay.every(c => c.rank === target || c.affix === 'mirage');
+    const shouldTellOnBluff = (persId !== 'coward' && persId !== 'eager');
+    const tellFires =
+      pers && pers.tell && shouldShowTells() && (
+        persId === 'wildcard' ? (Math.random() < 0.5) :
+        persId === 'mimic'    ? (state.lastHumanPlay && Math.random() < 0.6) :
+        shouldTellOnBluff     ? isBluff :
+        false
+      );
+    if (tellFires) {
       log('[Tell] ' + playerLabel(botIdx) + ' (' + pers.name + ') ' + pers.tell + '.');
     }
 
@@ -1575,6 +2668,17 @@
     const pers = persId
       ? (PERSONALITY_CATALOG[persId] || BOSS_CATALOG[persId] || null)
       : null;
+
+    // The Auditor: challenges every Nth opportunity (N = runState.auditorEveryN,
+    // rolled once per floor in [1..5]). Counter ticks every time we get here.
+    if (persId === 'auditor') {
+      const N = (runState && runState.auditorEveryN) || 3;
+      state.auditorChances = (state.auditorChances || 0) + 1;
+      const fires = (state.auditorChances % N) === 0;
+      if (fires) log('[Tell] The Auditor flips its ledger — challenge incoming.');
+      return fires;
+    }
+
     let base = lp.count === 3 ? 0.40 : lp.count === 2 ? 0.25 : 0.15;
     if (pers) {
       // Personality multiplier: pers.challengeRate / 0.25 (default baseline)
@@ -1600,8 +2704,12 @@
 
     const lpEl = document.getElementById('betaLastPlay');
     if (state.lastPlay && state.challengeOpen) {
+      // Foggy hides the rank as well as the target — show "?" so the player
+      // genuinely has to remember.
+      const foggyHide = state.foggyHidden && runState && runState.currentFloorModifier === 'foggy';
+      const claimText = foggyHide ? '?' : state.lastPlay.claim;
       lpEl.textContent = playerLabel(state.lastPlay.playerIdx) +
-        ' claims ' + state.lastPlay.count + ' × ' + state.lastPlay.claim;
+        ' claims ' + state.lastPlay.count + ' × ' + claimText;
     } else {
       lpEl.textContent = '';
     }
@@ -1687,10 +2795,51 @@
   // Phase 5+: render the consumables row. Each consumable shows name + count,
   // is clickable when owned to open an info modal.
   const CONSUMABLE_INFO = {
-    smokeBomb:   { name: 'Smoke Bomb',     desc: 'Skip your turn (your card pass passes to the next active player).' },
-    counterfeit: { name: 'Counterfeit',    desc: 'Change the target rank for the rest of the round AND lock it through the next Liar call. Once per round.' },
-    jackBeNimble:{ name: 'Jack-be-Nimble', desc: 'Discard up to 2 Jacks from your hand. Use anytime on your turn.' },
+    smokeBomb:     { name: 'Smoke Bomb',     desc: 'Skip your turn (play passes to the next active player).' },
+    counterfeit:   { name: 'Counterfeit',    desc: 'Change the target rank for the rest of the round AND lock it through the next Liar call. Once per round.' },
+    jackBeNimble:  { name: 'Jack-be-Nimble', desc: 'Discard up to 2 Jacks from your hand. Use anytime on your turn.' },
+    whisperNetwork:{ name: 'Whisper Network',desc: 'Hear how many Jacks each opponent currently holds (private read).' },
+    luckyCoin:     { name: 'Lucky Coin',     desc: 'Re-roll the affix on a chosen hand card (Steel-immune; Cursed clears).' },
+    snakeEyes:     { name: 'Snake Eyes',     desc: 'Cancel the next Target Rank rotation. One-shot lock.' },
+    emptyThreat:   { name: 'Empty Threat',   desc: 'Floor-locked. Fake a Liar call against the next bot play; the bot reacts cautiously, but no real call fires.' },
+    distillation:  { name: 'Distillation',   desc: 'Merge 2 same-rank hand cards into 1 with a random affix.' },
+    pickpocket:    { name: 'Pickpocket',     desc: 'Floor-locked. Steal a random non-Jack from a chosen opponent (positive affixes weighted higher).' },
+    deadDrop:      { name: 'Dead Drop',      desc: 'Discard 3 random hand cards, then draw 3 from the draw pile.' },
+    markedDeck:    { name: 'Marked Deck',    desc: 'Floor-locked. Apply a chosen affix to a random draw-pile card.' },
+    jokersMask:    { name: "The Joker's Mask",desc: 'Tag a non-Jack so it counts as a Jack for the Jack curse this round.' },
+    mirrorShard:   { name: 'Mirror Shard',   desc: 'Arm: the next Liar call against you shows only the result, not the cards.' },
   };
+  // Map id -> use-handler for new consumables. Old ones (smoke / counterfeit /
+  // jackBeNimble) still have their own buttons in the action bar; we let those
+  // stay primary but also let players use them via the row when convenient.
+  const CONSUMABLE_USE_HANDLERS = {
+    smokeBomb:      () => useSmokeBomb(),
+    counterfeit:    () => startCounterfeitPick(),
+    jackBeNimble:   () => useJackBeNimble(),
+    whisperNetwork: () => useWhisperNetwork(),
+    luckyCoin:      () => useLuckyCoin(),
+    snakeEyes:      () => useSnakeEyes(),
+    emptyThreat:    () => useEmptyThreat(),
+    distillation:   () => useDistillation(),
+    pickpocket:     () => usePickpocket(),
+    deadDrop:       () => useDeadDrop(),
+    markedDeck:     () => useMarkedDeck(),
+    jokersMask:     () => useJokersMask(),
+    mirrorShard:    () => useMirrorShard(),
+  };
+
+  function _consumableUsableNow(id) {
+    if (!state || state.gameOver) return false;
+    if (state.currentTurn !== 0) return false;
+    if (state.challengeOpen) return false;
+    if (state.finished[0] || state.eliminated[0]) return false;
+    // Some consumables are floor-locked: blocked if the per-floor flag is set.
+    if (id === 'pickpocket' && runState.pickpocketUsedThisFloor) return false;
+    if (id === 'markedDeck' && runState.markedDeckUsedThisFloor) return false;
+    if (id === 'emptyThreat' && runState.emptyThreatUsedThisFloor) return false;
+    return true;
+  }
+
   function renderConsumablesRow() {
     const list = document.getElementById('betaConsumablesList');
     if (!list || !runState) return;
@@ -1700,16 +2849,23 @@
       const count = runState.inventory[id] || 0;
       const pill = document.createElement('div');
       const owned = count > 0;
-      pill.className = 'inline-flex items-center gap-1 px-2 py-1 rounded ' +
-        (owned
-          ? 'bg-amber-900/40 text-amber-100 cursor-pointer hover:bg-amber-800/60 transition'
-          : 'bg-black/40 text-white/40');
+      const usable = owned && _consumableUsableNow(id);
+      let cls = 'inline-flex items-center gap-1 px-2 py-1 rounded transition ';
+      if (usable) cls += 'bg-amber-700/70 text-amber-50 cursor-pointer hover:bg-amber-600/80 ring-1 ring-amber-300';
+      else if (owned) cls += 'bg-amber-900/40 text-amber-100 cursor-pointer hover:bg-amber-800/60';
+      else cls += 'bg-black/40 text-white/40';
+      pill.className = cls;
+      const useHint = usable ? ' &middot; <span class="text-[10px] text-amber-200">click to use</span>' : '';
       pill.innerHTML = escapeHtml(info.name) +
-        ' <span class="font-bold">(' + count + ')</span>';
+        ' <span class="font-bold">(' + count + ')</span>' + useHint;
       pill.title = info.desc;
       if (owned) {
         pill.addEventListener('click', () => {
-          showInfoModal(info.name, 'You own ' + count, info.desc);
+          if (usable && CONSUMABLE_USE_HANDLERS[id]) {
+            CONSUMABLE_USE_HANDLERS[id]();
+          } else {
+            showInfoModal(info.name, 'You own ' + count, info.desc);
+          }
         });
       }
       list.appendChild(pill);
@@ -2197,6 +3353,10 @@
     for (let i = 0; i < runState.jokers.length; i++) {
       if (runState.jokers[i] === null) {
         runState.jokers[i] = { ...jokerData };
+        if (runState.ach) {
+          runState.ach.jokersEverEquipped = (runState.ach.jokersEverEquipped || 0) + 1;
+          if (runState.ach.jokersEverEquipped >= 5) _achGrant('jokersWild');
+        }
         return true;
       }
     }
@@ -2214,6 +3374,9 @@
     let mult = (runState.character && runState.character.goldMultiplier) || 1;
     if (hasRelic('ledger')) mult *= LEDGER_GOLD_MULT;
     if (runState.currentFloorModifier === 'greedy') mult *= 2;  // Phase 8+
+    if (runState.currentFloorModifier === 'richFolk') mult *= 0.5;  // Rich Folk: gold halved
+    // Dragon Scale: +10% gold per Steel card in hand.
+    if (hasRelic('dragonScale')) mult *= (1 + 0.10 * _humanSteelCount());
     const final = Math.floor(amount * mult);
     runState.gold += final;
     return final;
@@ -2226,9 +3389,19 @@
     if (!runState || !state || state.gameOver) return;
     const gilded = state.hands[0].filter(c => c.affix === 'gilded').length;
     if (gilded > 0) {
-      const base = gilded * GOLD_PER_GILDED_PER_TURN;
+      // Patron joker: +1g per Gilded card on top of the base Gilded amount.
+      const perCard = GOLD_PER_GILDED_PER_TURN + (hasJoker('patron') ? 1 : 0);
+      const base = gilded * perCard;
       const gain = addGold(base);
       state._gildedRoundEarnings = (state._gildedRoundEarnings || 0) + gain;
+    }
+    // Decrement Cursed lock counters on the human's turn-start.
+    if (state.currentTurn === 0) {
+      for (const c of state.hands[0]) {
+        if (c.cursedLockTurns && c.cursedLockTurns > 0) {
+          c.cursedLockTurns -= 1;
+        }
+      }
     }
   }
 
@@ -2258,11 +3431,33 @@
                      isCurrent ? '▶ playing' :
                      isChallenging ? '? deciding' :
                      personaLabel;
+      // The Hollow boss hides their hand size from the player.
+      const hollowHide = persId === 'hollow';
+      const handSizeDisplay = hollowHide ? '?' : state.hands[i].length;
+      // Seer's Eye: show affix dots beside the hand-size number, one per card.
+      let seerStrip = '';
+      if (hasRelic('seersEye') && !hollowHide) {
+        const dotColors = {
+          gilded: 'bg-yellow-400',
+          glass: 'bg-cyan-400',
+          spiked: 'bg-red-400',
+          cursed: 'bg-purple-500',
+          steel: 'bg-gray-300',
+          mirage: 'bg-pink-400',
+          hollow: 'bg-indigo-400',
+          echo: 'bg-fuchsia-400',
+        };
+        const dots = state.hands[i].map(c => {
+          const col = dotColors[c.affix] || 'bg-white/20';
+          return '<span class="inline-block w-2 h-2 rounded-full mx-0.5 ' + col + '"></span>';
+        }).join('');
+        seerStrip = '<div class="my-1 min-h-[0.5rem]">' + dots + '</div>';
+      }
       const card = document.createElement('div');
       card.className = 'bg-black/40 p-3 rounded-lg text-center min-w-[120px]' + ringClass;
       card.innerHTML =
         '<div class="text-sm font-bold">' + BOT_NAMES[i - 1] + '</div>' +
-        '<div class="text-2xl font-extrabold my-1">' + state.hands[i].length + '</div>' +
+        '<div class="text-2xl font-extrabold my-1">' + handSizeDisplay + '</div>' + seerStrip +
         '<div class="text-xs text-emerald-300">cards</div>' +
         '<div class="text-xs text-yellow-300 mt-1 min-h-[1rem]">' + status + '</div>';
       div.appendChild(card);
@@ -2294,6 +3489,11 @@
       if (card.affix) div.title = 'Affix: ' + card.affix;
       div.className = cls;
       if (selected.has(card.id)) div.classList.add('selected');
+      // Trickster: mark the +/-1 wildcard card with a fuchsia outer ring + tooltip.
+      if (state && state.tricksterMarkedId === card.id) {
+        div.style.boxShadow = '0 0 0 3px #d946ef';
+        div.title = (div.title ? div.title + ' \u2014 ' : '') + 'Trickster +/-1 wildcard';
+      }
       div.textContent = card.rank;
       div.dataset.id = card.id;
       if (myTurn) {
@@ -2355,18 +3555,20 @@
 
     const smokeBtn = document.getElementById('betaUseSmokeBtn');
     smokeBtn.classList.add('hidden');
-    if (myTurn && runState && runState.inventory.smokeBomb > 0) {
+    const carouserSmokeFree = hasJoker('carouser') && runState && runState.carouserUsedThisFloor && !runState.carouserUsedThisFloor.smokeBomb;
+    if (myTurn && runState && (runState.inventory.smokeBomb > 0 || carouserSmokeFree)) {
       smokeBtn.classList.remove('hidden');
-      document.getElementById('betaSmokeCount').textContent = runState.inventory.smokeBomb;
+      document.getElementById('betaSmokeCount').textContent = (runState.inventory.smokeBomb || 0) + (carouserSmokeFree ? '+1\u2728' : '');
     }
 
     // Counterfeit button + inline rank picker (Phase 4)
     const cfBtn = document.getElementById('betaUseCounterfeitBtn');
     cfBtn.classList.add('hidden');
-    if (myTurn && runState && runState.inventory.counterfeit > 0 &&
+    const carouserCfFree = hasJoker('carouser') && runState && runState.carouserUsedThisFloor && !runState.carouserUsedThisFloor.counterfeit;
+    if (myTurn && runState && (runState.inventory.counterfeit > 0 || carouserCfFree) &&
         !state.counterfeitUsed) {
       cfBtn.classList.remove('hidden');
-      document.getElementById('betaCounterfeitCount').textContent = runState.inventory.counterfeit;
+      document.getElementById('betaCounterfeitCount').textContent = (runState.inventory.counterfeit || 0) + (carouserCfFree ? '+1\u2728' : '');
     }
     const cfPicker = document.getElementById('betaCounterfeitPicker');
     if (counterfeitPickOpen && canUseCounterfeit()) {
@@ -2388,11 +3590,12 @@
     // Jack-be-Nimble button (Phase 4) — only show when there are Jacks to discard
     const jbnBtn = document.getElementById('betaUseJackBtn');
     jbnBtn.classList.add('hidden');
-    if (myTurn && runState && runState.inventory.jackBeNimble > 0) {
+    const carouserJbnFree = hasJoker('carouser') && runState && runState.carouserUsedThisFloor && !runState.carouserUsedThisFloor.jackBeNimble;
+    if (myTurn && runState && (runState.inventory.jackBeNimble > 0 || carouserJbnFree)) {
       const jacksInHand = state.hands[0].filter(c => c.rank === 'J').length;
       if (jacksInHand > 0) {
         jbnBtn.classList.remove('hidden');
-        document.getElementById('betaJackBtnCount').textContent = runState.inventory.jackBeNimble;
+        document.getElementById('betaJackBtnCount').textContent = (runState.inventory.jackBeNimble || 0) + (carouserJbnFree ? '+1\u2728' : '');
       }
     }
 
@@ -2420,6 +3623,327 @@
         ldBtn.classList.remove('hidden');
       }
     }
+    // Cracked Mirror "Rewind" button — visible whenever a fresh snapshot is
+    // available and it's still the human's option (after challenge resolved,
+    // before next play). Once per floor.
+    _ensureMirrorRewindButton(
+      hasRelic('crackedMirror') && !runState.crackedMirrorUsedThisFloor &&
+      state._mirrorSnapshot && !state.gameOver
+    );
+    // New joker action buttons: Trickster, Doppelganger, Saboteur, Last Word.
+    // We create + reuse them on demand to avoid touching index.html.
+    _ensureJokerActionButton('betaTricksterBtn', 'fuchsia', '\ud83c\udfb4 Trickster',
+      myTurn && hasJoker('trickster') && !state.tricksterUsedThisRound,
+      onTricksterClick);
+    _ensureJokerActionButton('betaDoppelgangerBtn', 'pink', '\ud83d\udc65 Doppelganger',
+      myTurn && hasJoker('doppelganger') && !state.doppelUsedThisRound && state.lastPlay,
+      onDoppelgangerClick);
+    _ensureJokerActionButton('betaSaboteurBtn', 'orange', '\u2620 Saboteur',
+      myTurn && hasJoker('saboteur') && runState && !runState.saboteurUsedThisFloor && state.hands[0].length > 0,
+      onSaboteurClick);
+    // Magician character: once per round, transform a hand card.
+    const magUsable = myTurn && runState && runState.character &&
+                      runState.character.transformPerRound &&
+                      !state.magicianUsedThisRound && state.hands[0].length > 0;
+    _ensureJokerActionButton('betaMagicianBtn', 'fuchsia', '\u2728 Transmute',
+      magUsable, onMagicianClick);
+    // Doppelganger label changes if armed.
+    const dgBtn = document.getElementById('betaDoppelgangerBtn');
+    if (dgBtn && myTurn && hasJoker('doppelganger')) {
+      dgBtn.textContent = state.doppelArmed
+        ? 'Doppelganger ON (cancel)'
+        : '\ud83d\udc65 Doppelganger';
+    }
+    // Trickster label changes if a card is marked.
+    const trBtn = document.getElementById('betaTricksterBtn');
+    if (trBtn && myTurn && hasJoker('trickster')) {
+      trBtn.textContent = state.tricksterMarkedId
+        ? 'Trickster: marked'
+        : '\ud83c\udfb4 Trickster';
+    }
+    // Render the Memorizer side panel (private to joker holder).
+    renderMemorizerPanel();
+  }
+
+  function _ensureMirrorRewindButton(visible) {
+    let btn = document.getElementById('betaMirrorRewindBtn');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'betaMirrorRewindBtn';
+      btn.className = 'hidden bg-amber-700 hover:bg-amber-600 transition px-4 py-2 rounded-lg font-bold text-sm';
+      btn.textContent = '\u23ee Rewind (Cracked Mirror)';
+      btn.addEventListener('click', _doMirrorRewind);
+      const ld = document.getElementById('betaLoadedDieBtn');
+      if (ld && ld.parentNode) ld.parentNode.appendChild(btn);
+      else document.body.appendChild(btn);
+    }
+    if (visible) btn.classList.remove('hidden');
+    else btn.classList.add('hidden');
+  }
+  function _doMirrorRewind() {
+    if (!state || !state._mirrorSnapshot) return;
+    if (!hasRelic('crackedMirror') || runState.crackedMirrorUsedThisFloor) return;
+    // Restore hand and pile.
+    const snap = state._mirrorSnapshot;
+    state.hands[0] = snap.prevHand.map(c => ({ ...c }));
+    // Trim the pile back to its pre-play length, but skip any cards that have
+    // since been picked up (which means the pile is shorter).
+    while (state.pile.length > snap.prevPileLen) state.pile.pop();
+    state._mirrorSnapshot = null;
+    runState.crackedMirrorUsedThisFloor = true;
+    log('Cracked Mirror: your last play is rewound. Hand and pile restored.');
+    render();
+  }
+  // Tiny helper: create-or-reuse a joker action button beside the others,
+  // toggling visibility based on availability.
+  function _ensureJokerActionButton(id, tone, label, visible, onClick) {
+    let btn = document.getElementById(id);
+    const colorMap = {
+      fuchsia: 'bg-fuchsia-700 hover:bg-fuchsia-600',
+      pink:    'bg-pink-700 hover:bg-pink-600',
+      orange:  'bg-orange-700 hover:bg-orange-600',
+    };
+    const tonecls = colorMap[tone] || 'bg-purple-700 hover:bg-purple-600';
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = id;
+      btn.className = 'hidden ' + tonecls + ' transition px-4 py-2 rounded-lg font-bold text-sm';
+      btn.textContent = label;
+      btn.addEventListener('click', () => onClick());
+      const ld = document.getElementById('betaLoadedDieBtn');
+      if (ld && ld.parentNode) ld.parentNode.appendChild(btn);
+      else document.body.appendChild(btn);
+    }
+    if (visible) btn.classList.remove('hidden');
+    else btn.classList.add('hidden');
+  }
+
+  // Memorizer side panel — bottom-left, click to dismiss the most recent
+  // entry isn't supported (kept simple). Cleared on round end.
+  function renderMemorizerPanel() {
+    let panel = document.getElementById('betaMemorizerPanel');
+    if (!hasJoker('memorizer') || !state || !state.memorizerLog || state.memorizerLog.length === 0) {
+      if (panel) panel.classList.add('hidden');
+      return;
+    }
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'betaMemorizerPanel';
+      panel.className = 'fixed bottom-4 left-4 max-w-xs bg-fuchsia-900/95 border border-fuchsia-300 text-fuchsia-50 text-xs rounded-lg shadow-2xl p-3 z-40';
+      document.body.appendChild(panel);
+    }
+    const items = state.memorizerLog.slice(-30).map(e => {
+      const aff = e.affix ? ' [' + e.affix + ']' : '';
+      const claim = e.claim ? (' / claim: ' + e.claim) : '';
+      return '<div>' + escapeHtml(e.rank + aff + claim) + '</div>';
+    }).join('');
+    panel.innerHTML = '<div class="text-[10px] uppercase tracking-widest text-fuchsia-200 font-bold mb-1">\ud83e\udde0 Memorizer (revealed cards)</div>' + items;
+    panel.classList.remove('hidden');
+  }
+
+  // Trickster: prompt the player to mark one of their hand cards as +/-1
+  // wildcard. Re-uses the inline picker pattern.
+  function onTricksterClick() {
+    if (!hasJoker('trickster')) return;
+    if (state.tricksterUsedThisRound) return;
+    if (state.gameOver || state.challengeOpen || state.currentTurn !== 0) return;
+    if (state.tricksterMarkedId) {
+      // Toggle off
+      state.tricksterMarkedId = null;
+      log('Trickster: mark cleared.');
+      render();
+      return;
+    }
+    // Show a picker: list each hand card; click to mark.
+    let modal = document.getElementById('betaTricksterModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'betaTricksterModal';
+      modal.className = 'fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4';
+      modal.innerHTML =
+        '<div class="bg-slate-800 border-2 border-fuchsia-400 p-6 rounded-2xl shadow-2xl max-w-lg w-full">' +
+          '<h3 class="text-xl font-bold mb-1 text-center">\ud83c\udfb4 Trickster</h3>' +
+          '<p class="text-xs text-emerald-200 mb-3 text-center">Pick a hand card to mark as +/-1 wildcard for this round.</p>' +
+          '<div id="betaTricksterCards" class="flex flex-wrap gap-2 justify-center mb-4"></div>' +
+          '<div class="text-center"><button id="betaTricksterCancel" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg text-sm">Cancel</button></div>' +
+        '</div>';
+      document.body.appendChild(modal);
+      modal.querySelector('#betaTricksterCancel').addEventListener('click', () => modal.classList.add('hidden'));
+    }
+    const cardsDiv = modal.querySelector('#betaTricksterCards');
+    cardsDiv.innerHTML = '';
+    const order = ['A', 'K', 'Q', '10', 'J'];
+    const sorted = state.hands[0].slice().sort((a, b) => {
+      const ai = order.indexOf(a.rank), bi = order.indexOf(b.rank);
+      if (ai !== bi) return ai - bi;
+      return a.id.localeCompare(b.id);
+    });
+    for (const c of sorted) {
+      const btn = document.createElement('button');
+      let cls = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded cursor-pointer hover:scale-105 transition';
+      const ring = affixRingClass(c.affix);
+      if (ring) cls += ' ' + ring;
+      else if (c.owner === 0) cls += ' ring-2 ring-emerald-400';
+      btn.className = cls;
+      btn.textContent = c.rank;
+      const cid = c.id;
+      btn.addEventListener('click', () => {
+        state.tricksterMarkedId = cid;
+        state.tricksterUsedThisRound = true;
+        log('Trickster: marked a ' + c.rank + ' as +/-1 wildcard.');
+        modal.classList.add('hidden');
+        render();
+      });
+      cardsDiv.appendChild(btn);
+    }
+    modal.classList.remove('hidden');
+  }
+
+  // Doppelganger: arm/cancel the next-play mimic. Requires a previous play.
+  function onDoppelgangerClick() {
+    if (!hasJoker('doppelganger')) return;
+    if (state.doppelUsedThisRound) return;
+    if (state.gameOver || state.challengeOpen || state.currentTurn !== 0) return;
+    if (!state.lastPlay) {
+      log('Doppelganger: no previous play to copy yet.');
+      return;
+    }
+    state.doppelArmed = !state.doppelArmed;
+    log(state.doppelArmed
+      ? 'Doppelganger armed: your next play will mirror the previous (' + state.lastPlay.count + ' x ' + state.lastPlay.claim + ').'
+      : 'Doppelganger cancelled.');
+    render();
+  }
+
+  // Saboteur: pick a target opponent, then dump a random card from your hand
+  // (Jacks ~30% more likely) into their hand. Once per floor.
+  function onSaboteurClick() {
+    if (!hasJoker('saboteur')) return;
+    if (!runState || runState.saboteurUsedThisFloor) return;
+    if (state.gameOver || state.challengeOpen || state.currentTurn !== 0) return;
+    if (state.hands[0].length === 0) return;
+    let modal = document.getElementById('betaSaboteurModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'betaSaboteurModal';
+      modal.className = 'fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4';
+      modal.innerHTML =
+        '<div class="bg-slate-800 border-2 border-orange-400 p-6 rounded-2xl shadow-2xl max-w-lg w-full">' +
+          '<h3 class="text-xl font-bold mb-1 text-center">\u2620 Saboteur</h3>' +
+          '<p class="text-xs text-emerald-200 mb-3 text-center">Pick a target — they\'ll get a random card from your hand. Jacks are weighted heavily.</p>' +
+          '<div id="betaSaboteurTargets" class="flex flex-wrap gap-2 justify-center mb-4"></div>' +
+          '<div class="text-center"><button id="betaSaboteurCancel" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg text-sm">Cancel</button></div>' +
+        '</div>';
+      document.body.appendChild(modal);
+      modal.querySelector('#betaSaboteurCancel').addEventListener('click', () => modal.classList.add('hidden'));
+    }
+    const list = modal.querySelector('#betaSaboteurTargets');
+    list.innerHTML = '';
+    let any = 0;
+    for (let i = 1; i < NUM_PLAYERS; i++) {
+      if (state.eliminated[i] || state.finished[i]) continue;
+      any++;
+      const btn = document.createElement('button');
+      btn.className = 'bg-orange-700 hover:bg-orange-600 transition px-4 py-3 rounded font-bold';
+      btn.textContent = playerLabel(i) + ' (' + state.hands[i].length + ' cards)';
+      const tgt = i;
+      btn.addEventListener('click', () => {
+        // Weighted random: each card weight 1; Jacks weight 1.30 (~30% more).
+        const hand = state.hands[0];
+        const weights = hand.map(c => c.rank === 'J' ? 1.30 : 1);
+        const total = weights.reduce((a, b) => a + b, 0);
+        let r = Math.random() * total;
+        let picked = 0;
+        for (let k = 0; k < hand.length; k++) {
+          r -= weights[k];
+          if (r <= 0) { picked = k; break; }
+        }
+        const card = hand.splice(picked, 1)[0];
+        state.hands[tgt].push(card);
+        runState.saboteurUsedThisFloor = true;
+        log('Saboteur: ' + card.rank + (card.affix ? ' [' + card.affix + ']' : '') +
+            ' pushed into ' + playerLabel(tgt) + '\'s hand.');
+        modal.classList.add('hidden');
+        if (checkJackCurse(tgt)) return;
+        render();
+      });
+      list.appendChild(btn);
+    }
+    if (any === 0) {
+      list.innerHTML = '<p class="text-rose-300 text-sm">No valid targets.</p>';
+    }
+    modal.classList.remove('hidden');
+  }
+
+  // Magician character — pick a hand card and choose a new rank for it.
+  function onMagicianClick() {
+    if (!runState || !runState.character || !runState.character.transformPerRound) return;
+    if (state.magicianUsedThisRound) return;
+    if (state.gameOver || state.challengeOpen || state.currentTurn !== 0) return;
+    if (state.hands[0].length === 0) return;
+    let modal = document.getElementById('betaMagicianModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'betaMagicianModal';
+      modal.className = 'fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4';
+      document.body.appendChild(modal);
+    }
+    modal.innerHTML =
+      '<div class="bg-slate-800 border-2 border-fuchsia-400 p-6 rounded-2xl shadow-2xl max-w-lg w-full">' +
+        '<h3 class="text-xl font-bold mb-1 text-center">\u2728 Transmute</h3>' +
+        '<p class="text-xs text-emerald-200 mb-3 text-center">Pick a hand card. Affix is wiped, rank changes.</p>' +
+        '<div id="magCards" class="flex flex-wrap gap-2 justify-center mb-4"></div>' +
+        '<div id="magRanks" class="hidden text-center mb-2"></div>' +
+        '<div class="text-center"><button id="magCancel" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg text-sm">Cancel</button></div>' +
+      '</div>';
+    const cardsDiv = modal.querySelector('#magCards');
+    const ranksDiv = modal.querySelector('#magRanks');
+    cardsDiv.innerHTML = '';
+    const order = ['A','K','Q','10','J'];
+    const sorted = state.hands[0].slice().sort((a, b) => {
+      const ai = order.indexOf(a.rank), bi = order.indexOf(b.rank);
+      if (ai !== bi) return ai - bi;
+      return a.id.localeCompare(b.id);
+    });
+    for (const c of sorted) {
+      const btn = document.createElement('button');
+      let cls = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded cursor-pointer hover:scale-105 transition';
+      const ring = affixRingClass(c.affix);
+      if (ring) cls += ' ' + ring;
+      else if (c.owner === 0) cls += ' ring-2 ring-emerald-400';
+      btn.className = cls;
+      btn.textContent = c.rank;
+      const cid = c.id;
+      btn.addEventListener('click', () => {
+        cardsDiv.classList.add('hidden');
+        ranksDiv.classList.remove('hidden');
+        ranksDiv.innerHTML = '<p class="text-xs text-fuchsia-200 mb-2">Pick the new rank for that card:</p>';
+        const rwrap = document.createElement('div');
+        rwrap.className = 'flex flex-wrap gap-2 justify-center';
+        for (const r of ['A','K','Q','10','J']) {
+          const rb = document.createElement('button');
+          rb.className = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded cursor-pointer hover:scale-105 transition';
+          rb.textContent = r;
+          rb.addEventListener('click', () => {
+            const card = state.hands[0].find(x => x.id === cid);
+            if (!card) { modal.classList.add('hidden'); return; }
+            const oldRank = card.rank, oldAffix = card.affix;
+            card.rank = r;
+            card.affix = null;
+            state.magicianUsedThisRound = true;
+            log('Transmute: ' + oldRank + (oldAffix ? '['+oldAffix+']' : '') + ' -> ' + r + ' (affix wiped).');
+            modal.classList.add('hidden');
+            if (checkJackCurse(0)) return;
+            render();
+          });
+          rwrap.appendChild(rb);
+        }
+        ranksDiv.appendChild(rwrap);
+      });
+      cardsDiv.appendChild(btn);
+    }
+    modal.querySelector('#magCancel').addEventListener('click', () => modal.classList.add('hidden'));
+    modal.classList.remove('hidden');
   }
 
   function renderLog() {
@@ -2437,19 +3961,62 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  // Private-peek toast — used by Cold Read, Hand Mirror, Bait, Surveyor reads,
+  // Eavesdropper, Echo. Stays visible for ~6s, click to dismiss. Distinct from
+  // the public round log so the same code path can later go to the player's
+  // private feed in PvP without leaking to all players.
+  function privatePeek(msg) {
+    let toast = document.getElementById('betaPrivatePeek');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'betaPrivatePeek';
+      toast.className = 'fixed bottom-4 right-4 max-w-xs bg-cyan-900/95 border border-cyan-300 text-cyan-50 text-sm rounded-lg shadow-2xl p-3 z-50 hidden';
+      toast.style.cursor = 'pointer';
+      toast.addEventListener('click', () => { toast.classList.add('hidden'); });
+      document.body.appendChild(toast);
+      toast._lines = [];
+      toast._timer = null;
+    }
+    toast._lines = (toast._lines || []).slice(-3);  // keep last 3 messages
+    toast._lines.push(msg);
+    toast.innerHTML = '<div class="text-xs uppercase tracking-widest text-cyan-200 font-bold mb-1">&#128064; Private read</div>' +
+      toast._lines.map(l => '<div class="mb-1">' + escapeHtml(l) + '</div>').join('') +
+      '<div class="text-[10px] text-cyan-200/70 mt-1">click to dismiss</div>';
+    toast.classList.remove('hidden');
+    if (toast._timer) clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => { toast.classList.add('hidden'); toast._lines = []; }, 6000);
+    // Also append to the round log for posterity.
+    log(msg);
+  }
+
   function revealCards(cards) {
     const reveal = document.getElementById('betaReveal');
-    reveal.innerHTML = '';
+    const sticky = !!(runState && runState.currentFloorModifier === 'sticky');
+    if (!sticky) reveal.innerHTML = '';
+    // Mirror Shard: if armed and the play being revealed is the human's, the
+    // reveal shows card BACKS only (the result still stands). Consumed on use.
+    const lp = state.lastPlay;
+    const blind = state.mirrorShardArmed && lp && lp.playerIdx === 0;
+    if (blind) {
+      state.mirrorShardArmed = false;
+      log('Mirror Shard: reveal hidden from the table.');
+    }
     for (const c of cards) {
       const div = document.createElement('div');
       const isMatch = c.rank === c.claim || c.affix === 'mirage';
-      div.className = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded' +
-                      (isMatch ? ' ring-2 ring-emerald-400' : ' ring-2 ring-red-500');
-      div.textContent = c.rank;
-      if (c.affix) div.title = 'Affix: ' + c.affix;
+      if (blind) {
+        div.className = 'card card-back rounded';
+      } else {
+        div.className = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded' +
+                        (isMatch ? ' ring-2 ring-emerald-400' : ' ring-2 ring-red-500');
+        div.textContent = c.rank;
+        if (c.affix) div.title = 'Affix: ' + c.affix;
+      }
       reveal.appendChild(div);
     }
-    revealTimer = setTimeout(() => { reveal.innerHTML = ''; }, REVEAL_HOLD_MS);
+    if (!sticky) {
+      revealTimer = setTimeout(() => { reveal.innerHTML = ''; }, REVEAL_HOLD_MS);
+    }
   }
 
   // ============================================================
@@ -2610,6 +4177,16 @@
     if (cs) cs.classList.add('hidden');
     const tr = document.getElementById('betaTreasure');
     if (tr) tr.classList.add('hidden');
+    const cl = document.getElementById('betaCleanse');
+    if (cl) cl.classList.add('hidden');
+  }
+
+  // Cleanse fork node — replaces Event on floors 2, 5, 8 per the design path.
+  // Lets the player either remove a Cursed run-deck card permanently, OR
+  // strip one affix from an affixed run-deck card.
+  function isCleanseFloor() {
+    const f = runState ? runState.currentFloor : 0;
+    return f === 2 || f === 5 || f === 8;
   }
 
   function showFork(floorJustFinished, humanWonFloor, winnerIdx, lastRoundMessage) {
@@ -2652,11 +4229,158 @@
         rewardBtn.className = 'bg-amber-700 hover:bg-amber-600 p-6 rounded-xl text-left transition';
       } else {
         rewardBtn.innerHTML = '<div class="text-2xl font-bold mb-1">&#128176; Reward</div>' +
-          '<div class="text-sm opacity-80">Take 75g, no questions asked.</div>';
+          '<div class="text-sm opacity-80">Take 75g / Gilded upgrade / pick a joker.</div>';
         rewardBtn.className = 'bg-emerald-700 hover:bg-emerald-600 p-6 rounded-xl text-left transition';
       }
     }
+
+    // Swap Event for Cleanse on floors 2, 5, 8 to match the design path.
+    const eventBtn = document.getElementById('betaForkEventBtn');
+    if (eventBtn) {
+      // Replace the node so we can re-attach a clean click handler each visit.
+      const fresh = eventBtn.cloneNode(false);
+      fresh.id = 'betaForkEventBtn';
+      eventBtn.parentNode.replaceChild(fresh, eventBtn);
+      if (isCleanseFloor()) {
+        fresh.innerHTML = '<div class="text-2xl font-bold mb-1">&#10024; Cleanse</div>' +
+          '<div class="text-sm opacity-80">Strip an affix or remove a Cursed card from your run deck.</div>';
+        fresh.className = 'bg-cyan-700 hover:bg-cyan-600 p-6 rounded-xl text-left transition';
+        fresh.addEventListener('click', chooseCleanse);
+      } else {
+        fresh.innerHTML = '<div class="text-2xl font-bold mb-1">&#10067; Event</div>' +
+          '<div class="text-sm opacity-80">A random encounter. Risk and reward.</div>';
+        fresh.className = 'bg-purple-700 hover:bg-purple-600 p-6 rounded-xl text-left transition';
+        fresh.addEventListener('click', chooseEvent);
+      }
+    }
     document.getElementById('betaFork').classList.remove('hidden');
+  }
+
+  // Cleanse panel — built dynamically so we don't need new index.html markup.
+  function ensureCleansePanel() {
+    let panel = document.getElementById('betaCleanse');
+    if (panel) return panel;
+    panel = document.createElement('div');
+    panel.id = 'betaCleanse';
+    panel.className = 'hidden max-w-md mx-auto pt-2 pb-10 text-center';
+    panel.innerHTML =
+      '<h2 class="text-3xl font-bold mb-4">&#10024; Cleanse</h2>' +
+      '<p class="text-emerald-200 mb-4">A quiet moment. Mend the run deck — pick what you want to undo.</p>' +
+      '<div id="betaCleanseOptions" class="space-y-3"></div>' +
+      '<div id="betaCleansePicker" class="hidden mt-4">' +
+        '<p id="betaCleansePickerTitle" class="text-emerald-200 mb-3"></p>' +
+        '<div id="betaCleansePickerCards" class="flex flex-wrap gap-2 justify-center mb-3"></div>' +
+        '<button id="betaCleansePickerCancel" class="bg-white/10 hover:bg-white/20 transition px-4 py-1 rounded text-sm">Back</button>' +
+      '</div>' +
+      '<div id="betaCleanseConfirm" class="hidden mt-4">' +
+        '<p id="betaCleanseConfirmText" class="text-2xl font-bold text-cyan-300 my-6"></p>' +
+        '<button id="betaCleanseContinueBtn" class="w-full bg-blue-600 hover:bg-blue-700 transition px-6 py-3 rounded-lg font-bold">Continue to Floor <span id="betaCleanseNextFloor">2</span></button>' +
+      '</div>';
+    // Insert next to the existing fork-related panels in the beta layout.
+    const beta = document.getElementById('betaTesting');
+    if (beta) beta.appendChild(panel);
+    else document.body.appendChild(panel);
+    panel.querySelector('#betaCleansePickerCancel').addEventListener('click', () => {
+      panel.querySelector('#betaCleansePicker').classList.add('hidden');
+      panel.querySelector('#betaCleanseOptions').classList.remove('hidden');
+    });
+    panel.querySelector('#betaCleanseContinueBtn').addEventListener('click', continueAfterFork);
+    return panel;
+  }
+
+  function chooseCleanse() {
+    hideAllPanels();
+    const panel = ensureCleansePanel();
+    panel.querySelector('#betaCleanseNextFloor').textContent = runState.currentFloor;
+    panel.querySelector('#betaCleanseConfirm').classList.add('hidden');
+    panel.querySelector('#betaCleansePicker').classList.add('hidden');
+    const options = panel.querySelector('#betaCleanseOptions');
+    options.classList.remove('hidden');
+    options.innerHTML = '';
+
+    const cursedInDeck = (runState.runDeck || []).filter(c => c.affix === 'cursed');
+    const affixedInDeck = (runState.runDeck || []).filter(c => c.affix);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'w-full bg-rose-700 hover:bg-rose-600 transition p-4 rounded-xl text-left disabled:opacity-40 disabled:cursor-not-allowed';
+    removeBtn.disabled = cursedInDeck.length === 0;
+    removeBtn.innerHTML =
+      '<div class="text-xl font-bold">&#128163; Remove a Cursed card</div>' +
+      '<div class="text-sm opacity-80">Permanently strip a Cursed card from your run deck. (' +
+      cursedInDeck.length + ' Cursed in deck)</div>';
+    removeBtn.addEventListener('click', () => startCleansePick('removeCursed', cursedInDeck));
+    options.appendChild(removeBtn);
+
+    const stripBtn = document.createElement('button');
+    stripBtn.className = 'w-full bg-cyan-700 hover:bg-cyan-600 transition p-4 rounded-xl text-left disabled:opacity-40 disabled:cursor-not-allowed';
+    stripBtn.disabled = affixedInDeck.length === 0;
+    stripBtn.innerHTML =
+      '<div class="text-xl font-bold">&#10024; Strip an affix</div>' +
+      '<div class="text-sm opacity-80">Remove the affix from one run-deck card (rank stays). (' +
+      affixedInDeck.length + ' affixed in deck)</div>';
+    stripBtn.addEventListener('click', () => startCleansePick('stripAffix', affixedInDeck));
+    options.appendChild(stripBtn);
+
+    if (cursedInDeck.length === 0 && affixedInDeck.length === 0) {
+      const note = document.createElement('p');
+      note.className = 'text-rose-300 text-sm mt-3';
+      note.textContent = 'Nothing to cleanse — your run deck is already pristine.';
+      options.appendChild(note);
+      const skip = document.createElement('button');
+      skip.className = 'mt-3 w-full bg-blue-600 hover:bg-blue-700 transition px-6 py-3 rounded-lg font-bold';
+      skip.textContent = 'Continue to Floor ' + runState.currentFloor;
+      skip.addEventListener('click', continueAfterFork);
+      options.appendChild(skip);
+    }
+
+    panel.classList.remove('hidden');
+  }
+
+  function startCleansePick(mode, cards) {
+    const panel = document.getElementById('betaCleanse');
+    panel.querySelector('#betaCleanseOptions').classList.add('hidden');
+    const picker = panel.querySelector('#betaCleansePicker');
+    picker.classList.remove('hidden');
+    panel.querySelector('#betaCleansePickerTitle').textContent =
+      mode === 'removeCursed'
+        ? 'Pick a Cursed card to remove (permanent)'
+        : 'Pick an affixed card to strip (affix removed, rank kept)';
+    const list = panel.querySelector('#betaCleansePickerCards');
+    list.innerHTML = '';
+    for (const c of cards) {
+      const btn = document.createElement('button');
+      let cls = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded cursor-pointer hover:scale-105 transition';
+      const ring = affixRingClass(c.affix);
+      if (ring) cls += ' ' + ring;
+      btn.className = cls;
+      btn.textContent = c.rank;
+      btn.title = 'Affix: ' + (c.affix || '—');
+      const id = c.id;
+      btn.addEventListener('click', () => applyCleansePick(mode, id));
+      list.appendChild(btn);
+    }
+  }
+
+  function applyCleansePick(mode, cardId) {
+    if (!runState || !runState.runDeck) return;
+    const idx = runState.runDeck.findIndex(c => c.id === cardId);
+    if (idx < 0) return;
+    let msg = '';
+    if (mode === 'removeCursed') {
+      const removed = runState.runDeck.splice(idx, 1)[0];
+      msg = 'Removed Cursed ' + removed.rank + ' from your run deck.';
+    } else {
+      const card = runState.runDeck[idx];
+      const old = card.affix;
+      card.affix = null;
+      msg = 'Stripped ' + (old || 'affix') + ' from ' + card.rank + '.';
+    }
+    log('Cleanse: ' + msg);
+    const panel = document.getElementById('betaCleanse');
+    panel.querySelector('#betaCleansePicker').classList.add('hidden');
+    const confirm = panel.querySelector('#betaCleanseConfirm');
+    confirm.classList.remove('hidden');
+    panel.querySelector('#betaCleanseConfirmText').textContent = msg;
   }
 
   // Phase 8+: rotating shop offer — pick a small subset each shop visit
@@ -2715,8 +4439,113 @@
     document.getElementById('betaRewardOptions').classList.remove('hidden');
     document.getElementById('betaRewardCardPicker').classList.add('hidden');
     document.getElementById('betaRewardConfirm').classList.add('hidden');
+    const jokerPicker = document.getElementById('betaRewardJokerPicker');
+    if (jokerPicker) jokerPicker.classList.add('hidden');
     document.getElementById('betaRewardNextFloor').textContent = runState.currentFloor;
+
+    // Add a "pick 1 of 2 jokers" button into the reward options if not present.
+    ensureRewardJokerButton();
     document.getElementById('betaReward').classList.remove('hidden');
+  }
+
+  function ensureRewardJokerButton() {
+    const options = document.getElementById('betaRewardOptions');
+    if (!options) return;
+    let btn = document.getElementById('betaRewardJokerBtn');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'betaRewardJokerBtn';
+      btn.className = 'w-full bg-purple-700 hover:bg-purple-600 transition p-4 rounded-xl text-left disabled:opacity-40 disabled:cursor-not-allowed';
+      btn.innerHTML = '<div class="text-xl font-bold">&#127183; Pick 1 of 2 random jokers</div>' +
+                      '<div class="text-sm opacity-80">Reroll-weighted by rarity. Free.</div>';
+      btn.addEventListener('click', startRewardJokerPick);
+      options.appendChild(btn);
+    }
+    // Disable + relabel if all joker slots are full
+    const slotsFull = (runState.jokers || []).every(j => j !== null);
+    btn.disabled = slotsFull;
+    if (slotsFull) {
+      btn.querySelector('.opacity-80').textContent = 'All joker slots are full.';
+    } else {
+      btn.querySelector('.opacity-80').textContent = 'Reroll-weighted by rarity. Free.';
+    }
+  }
+
+  function startRewardJokerPick() {
+    if ((runState.jokers || []).every(j => j !== null)) return;
+    document.getElementById('betaRewardOptions').classList.add('hidden');
+
+    // Use a dedicated picker wrapper (created on demand) so we don't clobber
+    // the gilded-upgrade picker's original markup.
+    let wrap = document.getElementById('betaRewardJokerPicker');
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.id = 'betaRewardJokerPicker';
+      const reward = document.getElementById('betaReward');
+      const confirm = document.getElementById('betaRewardConfirm');
+      if (reward && confirm) reward.insertBefore(wrap, confirm);
+      else if (reward) reward.appendChild(wrap);
+    }
+    wrap.innerHTML = '';
+    wrap.className = '';
+    const title = document.createElement('p');
+    title.className = 'text-emerald-200 mb-3';
+    title.textContent = 'Pick a joker to equip:';
+    wrap.appendChild(title);
+
+    // 2 random unowned jokers, rarity-weighted
+    const ownedJokerIds = (runState.jokers || []).filter(j => j).map(j => j.id);
+    const pool = Object.keys(JOKER_CATALOG).filter(id => !ownedJokerIds.includes(id));
+    const weights = { Common: 60, Uncommon: 25, Rare: 10, Legendary: 5 };
+    const offers = [];
+    const remaining = pool.slice();
+    while (offers.length < 2 && remaining.length > 0) {
+      let total = 0;
+      for (const id of remaining) total += (weights[JOKER_CATALOG[id].rarity] || 1);
+      let r = Math.random() * total;
+      let pickedIdx = 0;
+      for (let i = 0; i < remaining.length; i++) {
+        r -= (weights[JOKER_CATALOG[remaining[i]].rarity] || 1);
+        if (r <= 0) { pickedIdx = i; break; }
+      }
+      offers.push(remaining[pickedIdx]);
+      remaining.splice(pickedIdx, 1);
+    }
+
+    const list = document.createElement('div');
+    list.className = 'space-y-2';
+    if (offers.length === 0) {
+      list.innerHTML = '<p class="text-rose-300 text-sm">No jokers left to offer.</p>';
+    } else {
+      for (const id of offers) {
+        const j = JOKER_CATALOG[id];
+        const opt = document.createElement('button');
+        opt.className = 'w-full bg-purple-800 hover:bg-purple-700 transition p-4 rounded-xl text-left';
+        opt.innerHTML =
+          '<div class="text-lg font-bold mb-1">' + escapeHtml(j.name) + ' <span class="text-xs text-purple-200">[' + escapeHtml(j.rarity || '') + ']</span></div>' +
+          '<div class="text-xs opacity-80">' + escapeHtml(j.desc) + '</div>';
+        opt.addEventListener('click', () => {
+          equipJoker({ ...j });
+          if (id === 'tattletale') {
+            runState.tattletaleChargesThisFloor = TATTLETALE_CHARGES_PER_FLOOR;
+          }
+          log('Reward: equipped joker ' + j.name + '.');
+          wrap.classList.add('hidden');
+          showRewardConfirm('Equipped ' + j.name + '.');
+        });
+        list.appendChild(opt);
+      }
+    }
+    wrap.appendChild(list);
+    const back = document.createElement('button');
+    back.className = 'mt-3 bg-white/10 hover:bg-white/20 transition px-4 py-1 rounded text-sm';
+    back.textContent = 'Back';
+    back.addEventListener('click', () => {
+      wrap.classList.add('hidden');
+      document.getElementById('betaRewardOptions').classList.remove('hidden');
+    });
+    wrap.appendChild(back);
+    wrap.classList.remove('hidden');
   }
 
   // Phase 8+: Treasure node — pick a free relic from 2 random unowned ones
@@ -2835,10 +4664,37 @@
       const owned = isJoker ? (equipped ? 1 : 0) :
                     isRelic ? (ownedRelic ? 1 : 0) :
                     (runState.inventory[item.id] || 0);
+      // Forge Hand joker AND Engineer character: 25% off affix services.
+      // Engineer's discount applies to a wider pool (also Mirage Lens) per design.
+      const FORGE_HAND_IDS = ['glassShard', 'spikedWire', 'steelPlating'];
+      const ENGINEER_IDS = ['glassShard', 'spikedWire', 'steelPlating', 'mirageLens'];
+      const engOn = !!(runState.character && runState.character.affixDiscount);
+      const isAffixSvc = engOn ? ENGINEER_IDS.includes(item.id) : false;
+      const richFolkOn = !!(runState && runState.currentFloorModifier === 'richFolk');
+      // Stack: prefer the bigger discount available.
+      let baseDisc = 0;
+      if (hasJoker('forgeHand') && FORGE_HAND_IDS.includes(item.id)) baseDisc = Math.max(baseDisc, 0.25);
+      if (engOn && isAffixSvc) baseDisc = Math.max(baseDisc, runState.character.affixDiscount || 0);
+      if (richFolkOn && item.type === 'joker') baseDisc = Math.max(baseDisc, 0.50);
+      const forgeDiscount = baseDisc;
+      // Mutate item.price so the rest of the buy flow uses the discounted price.
+      if (forgeDiscount > 0 && !item._origPrice) {
+        item._origPrice = item.price;
+        item.price = Math.floor(item.price * (1 - forgeDiscount));
+      } else if (forgeDiscount === 0 && item._origPrice) {
+        item.price = item._origPrice;
+        delete item._origPrice;
+      }
       const canAfford = runState.gold >= item.price;
+      // Floor-locked items per design: Forger and Jack-be-Nimble (1 / floor).
+      const FLOOR_LOCKED_IDS = ['forger', 'jackBeNimble'];
+      const floorLocked = FLOOR_LOCKED_IDS.includes(item.id) &&
+                          runState.floorLockedBoughtThisFloor &&
+                          runState.floorLockedBoughtThisFloor[item.id];
       const disabled = !item.enabled || !canAfford ||
                        (isJoker && (equipped || slotsFull)) ||
-                       (isRelic && ownedRelic);
+                       (isRelic && ownedRelic) ||
+                       floorLocked;
       const row = document.createElement('div');
       row.className = 'relative bg-black/40 hover:bg-black/50 transition p-3 rounded-xl border border-white/10' +
                        (item.enabled ? '' : ' opacity-60');
@@ -2846,6 +4702,7 @@
       if (isJoker && equipped) btnLabel = 'Equipped';
       else if (isJoker && slotsFull && !equipped) btnLabel = 'Slots full';
       else if (isRelic && ownedRelic) btnLabel = 'Owned';
+      else if (floorLocked) btnLabel = 'Floor-locked';
       const priceColor = canAfford ? 'bg-yellow-400 text-black' : 'bg-rose-500 text-white';
       row.innerHTML =
         '<div class="absolute -top-2 left-3 px-2 py-0.5 rounded-full text-xs font-bold ' + priceColor + '">' + item.price + 'g</div>' +
@@ -2860,6 +4717,11 @@
       if (!disabled) {
         buyBtn.addEventListener('click', () => {
           if (runState.gold < item.price) return;
+          // Track floor-locked items at click-time so a second click is blocked.
+          if (FLOOR_LOCKED_IDS.includes(item.id)) {
+            runState.floorLockedBoughtThisFloor = runState.floorLockedBoughtThisFloor || {};
+            runState.floorLockedBoughtThisFloor[item.id] = true;
+          }
           if (item.type === 'service') {
             if (item.id === 'glassShard') startGlassShardApply(item);
             else if (item.id === 'forger') startForgerApply(item);
@@ -2896,6 +4758,7 @@
           } else {
             runState.gold -= item.price;
             runState.inventory[item.id] = owned + 1;
+            if (runState.ach) runState.ach.spent = (runState.ach.spent || 0) + item.price;
             log('Bought ' + item.name + ' for ' + item.price + 'g (now ' + runState.gold + 'g).');
             renderShop();
           }
@@ -3113,6 +4976,10 @@
             runState.gold -= item.price;
             target.rank = forgerSource.rank;
             target.affix = forgerSource.affix;
+            // Mass Forgery: count copies of this rank+affix in the run deck.
+            const sig = target.rank + ':' + (target.affix || '_');
+            const matches = runState.runDeck.filter(c => (c.rank + ':' + (c.affix || '_')) === sig).length;
+            if (matches >= 4) _achGrant('massForgery');
             log('Forger: target becomes ' + target.rank +
                 (target.affix ? ' [' + target.affix + ']' : '') +
                 '. (-' + item.price + 'g)');
@@ -3168,13 +5035,16 @@
 
 
   // Engraver — let the player pick a rank to ADD as a new vanilla card
-  // into their run deck. Caps the personal deck at 24 cards so it can't
-  // grow without bound.
+  // into their run deck. Cap is 24 by default, 32 with Stacked Deck.
   const RUN_DECK_MAX = 24;
+  function runDeckCap() {
+    return RUN_DECK_MAX + (hasRelic('stackedDeck') ? 8 : 0);
+  }
   function startEngraverApply(item) {
     if (!runState || !runState.runDeck) return;
-    if (runState.runDeck.length >= RUN_DECK_MAX) {
-      log('Engraver: your run deck is at the cap (' + RUN_DECK_MAX + '). Strip a card first.');
+    const cap = runDeckCap();
+    if (runState.runDeck.length >= cap) {
+      log('Engraver: your run deck is at the cap (' + cap + '). Strip a card first.');
       return;
     }
     const itemsDiv = document.getElementById('betaShopItems');
@@ -3391,10 +5261,17 @@
     if (!state || state.gameOver || state.challengeOpen) return;
     if (state.currentTurn !== 0) return;
     if (state.finished[0] || state.eliminated[0]) return;
-    if (!runState || runState.inventory.smokeBomb < 1) return;
+    const carouserFreeSmoke = hasJoker('carouser') && runState.carouserUsedThisFloor && !runState.carouserUsedThisFloor.smokeBomb;
+    if (!carouserFreeSmoke && (!runState || runState.inventory.smokeBomb < 1)) return;
 
-    runState.inventory.smokeBomb--;
-    log('You use a Smoke Bomb. Turn skipped.');
+    if (carouserFreeSmoke) {
+      runState.carouserUsedThisFloor.smokeBomb = true;
+      log('You use a Smoke Bomb (Carouser free use). Turn skipped.');
+    } else {
+      runState.inventory.smokeBomb--;
+      log('You use a Smoke Bomb. Turn skipped.');
+    }
+    if (runState.ach) runState.ach.consumableUses = (runState.ach.consumableUses || 0) + 1;
     selected.clear();
     advanceTurn(0);
     render();
@@ -3412,7 +5289,8 @@
     if (state.currentTurn !== 0) return false;
     if (state.finished[0] || state.eliminated[0]) return false;
     if (state.counterfeitUsed) return false;
-    if (!runState || runState.inventory.counterfeit < 1) return false;
+    const carouserFree = hasJoker('carouser') && runState.carouserUsedThisFloor && !runState.carouserUsedThisFloor.counterfeit;
+    if (!carouserFree && (!runState || runState.inventory.counterfeit < 1)) return false;
     return true;
   }
 
@@ -3425,13 +5303,20 @@
   function applyCounterfeit(newRank) {
     if (!canUseCounterfeit()) return;
     if (newRank === state.targetRank) return;
-    runState.inventory.counterfeit--;
+    const carouserFree = hasJoker('carouser') && runState.carouserUsedThisFloor && !runState.carouserUsedThisFloor.counterfeit;
+    if (carouserFree) {
+      runState.carouserUsedThisFloor.counterfeit = true;
+    } else {
+      runState.inventory.counterfeit--;
+    }
+    if (runState.ach) runState.ach.consumableUses = (runState.ach.consumableUses || 0) + 1;
     state.counterfeitUsed = true;
     state.counterfeitLock = true;  // survives the next Liar call's rotation
     const oldRank = state.targetRank;
     state.targetRank = newRank;
     counterfeitPickOpen = false;
-    log('You use Counterfeit. Target rank: ' + oldRank + ' -> ' + newRank +
+    log('You use Counterfeit' + (carouserFree ? ' (Carouser free use)' : '') +
+        '. Target rank: ' + oldRank + ' -> ' + newRank +
         '. (Lock held through the next Liar call.)');
     render();
   }
@@ -3469,21 +5354,495 @@
     if (!state || state.gameOver || state.challengeOpen) return;
     if (state.currentTurn !== 0) return;
     if (state.finished[0] || state.eliminated[0]) return;
-    if (!runState || runState.inventory.jackBeNimble < 1) return;
+    const carouserFree = hasJoker('carouser') && runState.carouserUsedThisFloor && !runState.carouserUsedThisFloor.jackBeNimble;
+    if (!carouserFree && (!runState || runState.inventory.jackBeNimble < 1)) return;
 
     const jacks = state.hands[0].filter(c => c.rank === 'J').slice(0, 2);
     if (jacks.length === 0) return;
 
-    runState.inventory.jackBeNimble--;
+    if (carouserFree) {
+      runState.carouserUsedThisFloor.jackBeNimble = true;
+    } else {
+      runState.inventory.jackBeNimble--;
+    }
+    if (runState.ach) runState.ach.consumableUses = (runState.ach.consumableUses || 0) + 1;
     const jackIds = new Set(jacks.map(c => c.id));
     state.hands[0] = state.hands[0].filter(c => !jackIds.has(c.id));
-    log('You use Jack-be-Nimble. Discarded ' + jacks.length +
+    log('You use Jack-be-Nimble' + (carouserFree ? ' (Carouser free use)' : '') +
+        '. Discarded ' + jacks.length +
         (jacks.length === 1 ? ' Jack.' : ' Jacks.'));
     selected.clear();
     render();
   }
 
   // ============================================================
+  // The Bookmark relic — end-of-round save-a-card-into-deck picker
+  // ============================================================
+  function _showBookmarkPicker() {
+    if (!state || !runState) return;
+    if (!state.hands[0] || state.hands[0].length === 0) return;
+    let modal = document.getElementById('betaBookmarkModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'betaBookmarkModal';
+      modal.className = 'fixed inset-0 bg-black/85 backdrop-blur z-50 flex items-center justify-center p-4';
+      document.body.appendChild(modal);
+    }
+    modal.innerHTML =
+      '<div class="bg-gradient-to-br from-yellow-700 via-amber-700 to-yellow-900 border-2 border-yellow-300 p-6 rounded-2xl shadow-2xl max-w-lg w-full">' +
+        '<h3 class="text-xl font-extrabold mb-1 text-center">\ud83d\udcd6 The Bookmark</h3>' +
+        '<p class="text-xs text-yellow-100 mb-4 text-center">Pick a hand card to save into your run deck (it will replace one of your run-deck cards). Or skip.</p>' +
+        '<div class="text-center text-xs text-yellow-200 mb-1">Hand:</div>' +
+        '<div id="bookmarkHandCards" class="flex flex-wrap gap-2 justify-center mb-4"></div>' +
+        '<div class="text-center mt-2"><button id="bookmarkSkipBtn" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg text-sm">Skip</button></div>' +
+      '</div>';
+    const cards = modal.querySelector('#bookmarkHandCards');
+    cards.innerHTML = '';
+    const order = ['A', 'K', 'Q', '10', 'J'];
+    const sorted = state.hands[0].slice().sort((a, b) => {
+      const ai = order.indexOf(a.rank), bi = order.indexOf(b.rank);
+      if (ai !== bi) return ai - bi;
+      return a.id.localeCompare(b.id);
+    });
+    for (const c of sorted) {
+      if (c.rank === 'J') continue;  // Jacks aren't saveable
+      const btn = document.createElement('button');
+      let cls = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded cursor-pointer hover:scale-105 transition';
+      const ring = affixRingClass(c.affix);
+      if (ring) cls += ' ' + ring;
+      else if (c.owner === 0) cls += ' ring-2 ring-emerald-400';
+      btn.className = cls;
+      btn.textContent = c.rank;
+      const cid = c.id;
+      btn.addEventListener('click', () => {
+        const handCard = state.hands[0].find(x => x.id === cid);
+        if (!handCard) { modal.classList.add('hidden'); return; }
+        _showBookmarkReplacePicker(handCard, modal);
+      });
+      cards.appendChild(btn);
+    }
+    modal.querySelector('#bookmarkSkipBtn').addEventListener('click', () => {
+      modal.classList.add('hidden');
+    });
+    modal.classList.remove('hidden');
+  }
+  function _showBookmarkReplacePicker(handCard, modal) {
+    const inner = modal.querySelector('div.bg-gradient-to-br');
+    inner.innerHTML =
+      '<h3 class="text-xl font-extrabold mb-1 text-center">\ud83d\udcd6 Replace which run-deck card?</h3>' +
+      '<p class="text-xs text-yellow-100 mb-4 text-center">' + handCard.rank + (handCard.affix ? ' [' + handCard.affix + ']' : '') + ' will replace the card you pick.</p>' +
+      '<div id="bookmarkRunCards" class="flex flex-wrap gap-2 justify-center mb-4"></div>' +
+      '<div class="text-center mt-2"><button id="bookmarkBackBtn" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg text-sm">Back</button></div>';
+    const list = inner.querySelector('#bookmarkRunCards');
+    const order = ['A', 'K', 'Q', '10', 'J'];
+    const sorted = runState.runDeck.slice().sort((a, b) => {
+      const ai = order.indexOf(a.rank), bi = order.indexOf(b.rank);
+      if (ai !== bi) return ai - bi;
+      return a.id.localeCompare(b.id);
+    });
+    for (const c of sorted) {
+      const btn = document.createElement('button');
+      let cls = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded cursor-pointer hover:scale-105 transition';
+      const ring = affixRingClass(c.affix);
+      if (ring) cls += ' ' + ring;
+      btn.className = cls;
+      btn.textContent = c.rank;
+      const targetId = c.id;
+      btn.addEventListener('click', () => {
+        const idx = runState.runDeck.findIndex(x => x.id === targetId);
+        if (idx < 0) { modal.classList.add('hidden'); return; }
+        // Replace: keep the original id so deck tracking stays clean, but
+        // adopt the saved card's rank + affix.
+        runState.runDeck[idx] = {
+          rank: handCard.rank,
+          id: runState.runDeck[idx].id,
+          owner: 0,
+          affix: handCard.affix || null,
+        };
+        log('Bookmark: saved ' + handCard.rank + (handCard.affix ? ' [' + handCard.affix + ']' : '') +
+            ' into your run deck.');
+        modal.classList.add('hidden');
+      });
+      list.appendChild(btn);
+    }
+    inner.querySelector('#bookmarkBackBtn').addEventListener('click', () => {
+      _showBookmarkPicker();
+    });
+  }
+
+  // Reset bookmark per-round flag at startRound time
+  function _resetPerRoundRelicFlags() {
+    if (runState) runState.bookmarkUsedThisRound = false;
+  }
+
+    // ============================================================
+  // New consumables (use* functions)
+  // ============================================================
+
+  // Helper used by several pickers — clear the "are you sure" sub-modal we
+  // append to document.body for each consumable. We reuse a single id.
+  function _consumableModal(id, opts) {
+    let modal = document.getElementById(id);
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = id;
+      modal.className = 'fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4';
+      document.body.appendChild(modal);
+    }
+    const tone = opts.borderColor || 'amber-400';
+    modal.innerHTML =
+      '<div class="bg-slate-800 border-2 border-' + tone + ' p-6 rounded-2xl shadow-2xl max-w-lg w-full">' +
+        '<h3 class="text-xl font-bold mb-1 text-center">' + (opts.title || '') + '</h3>' +
+        (opts.subtitle ? '<p class="text-xs text-emerald-200 mb-3 text-center">' + opts.subtitle + '</p>' : '') +
+        '<div id="' + id + 'Body"></div>' +
+        '<div class="text-center mt-4"><button id="' + id + 'Cancel" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg text-sm">Cancel</button></div>' +
+      '</div>';
+    modal.querySelector('#' + id + 'Cancel').addEventListener('click', () => modal.classList.add('hidden'));
+    modal.classList.remove('hidden');
+    return { modal, body: modal.querySelector('#' + id + 'Body') };
+  }
+
+  function _consumeCharge(id) {
+    runState.inventory[id] = Math.max(0, (runState.inventory[id] || 0) - 1);
+    if (runState.ach) runState.ach.consumableUses = (runState.ach.consumableUses || 0) + 1;
+  }
+
+  // ---- Whisper Network ----
+  function useWhisperNetwork() {
+    if (!_consumableUsableNow('whisperNetwork')) return;
+    if ((runState.inventory.whisperNetwork || 0) < 1) return;
+    _consumeCharge('whisperNetwork');
+    const lines = [];
+    for (let i = 1; i < NUM_PLAYERS; i++) {
+      if (state.eliminated[i] || state.finished[i]) continue;
+      lines.push(playerLabel(i) + ': ' + countJacks(state.hands[i]) + ' Jack(s)');
+    }
+    privatePeek('Whisper Network — ' + (lines.length ? lines.join('; ') : 'no targets') + '.');
+    render();
+  }
+
+  // ---- Lucky Coin ----
+  const LUCKY_COIN_AFFIXES = ['gilded', 'glass', 'spiked', 'mirage', 'hollow', 'echo', null];
+  function useLuckyCoin() {
+    if (!_consumableUsableNow('luckyCoin')) return;
+    if ((runState.inventory.luckyCoin || 0) < 1) return;
+    if (state.hands[0].length === 0) return;
+    const eligible = state.hands[0].filter(c => c.affix !== 'steel');
+    if (eligible.length === 0) {
+      log('Lucky Coin: no eligible cards (all Steel).');
+      return;
+    }
+    const { modal, body } = _consumableModal('betaLuckyCoinModal', {
+      borderColor: 'yellow-400',
+      title: '\ud83e\ude99 Lucky Coin',
+      subtitle: 'Pick a hand card to re-roll its affix (Steel-immune; Cursed clears).',
+    });
+    body.innerHTML = '';
+    const list = document.createElement('div');
+    list.className = 'flex flex-wrap gap-2 justify-center';
+    for (const c of eligible) {
+      const btn = document.createElement('button');
+      let cls = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded cursor-pointer hover:scale-105 transition';
+      const ring = affixRingClass(c.affix);
+      if (ring) cls += ' ' + ring;
+      else if (c.owner === 0) cls += ' ring-2 ring-emerald-400';
+      btn.className = cls;
+      btn.textContent = c.rank;
+      const cid = c.id;
+      btn.addEventListener('click', () => {
+        const card = state.hands[0].find(x => x.id === cid);
+        if (!card) { modal.classList.add('hidden'); return; }
+        const newAffix = LUCKY_COIN_AFFIXES[Math.floor(Math.random() * LUCKY_COIN_AFFIXES.length)];
+        const old = card.affix || 'plain';
+        card.affix = newAffix;
+        _consumeCharge('luckyCoin');
+        log('Lucky Coin: ' + card.rank + ' ' + old + ' -> ' + (newAffix || 'plain') + '.');
+        modal.classList.add('hidden');
+        render();
+      });
+      list.appendChild(btn);
+    }
+    body.appendChild(list);
+  }
+
+  // ---- Snake Eyes ----
+  function useSnakeEyes() {
+    if (!_consumableUsableNow('snakeEyes')) return;
+    if ((runState.inventory.snakeEyes || 0) < 1) return;
+    if (state.snakeEyesLock) {
+      log('Snake Eyes already armed.');
+      return;
+    }
+    _consumeCharge('snakeEyes');
+    state.snakeEyesLock = true;
+    log('Snake Eyes armed: target rank stays through the next Liar call.');
+    render();
+  }
+
+  // ---- Empty Threat ----
+  function useEmptyThreat() {
+    if (!_consumableUsableNow('emptyThreat')) return;
+    if ((runState.inventory.emptyThreat || 0) < 1) return;
+    if (runState.emptyThreatUsedThisFloor) return;
+    _consumeCharge('emptyThreat');
+    runState.emptyThreatUsedThisFloor = true;
+    state.emptyThreatPending = true;
+    // A 1-second mock "challenge" animation as the visual cue.
+    const bar = document.getElementById('betaChallengeBar');
+    if (bar) {
+      bar.classList.remove('hidden');
+      const fill = document.getElementById('betaChallengeBarFill');
+      if (fill) {
+        fill.style.transition = 'none';
+        fill.style.width = '100%';
+        setTimeout(() => {
+          if (fill) { fill.style.transition = 'width 0.9s linear'; fill.style.width = '0%'; }
+        }, 30);
+        setTimeout(() => { bar.classList.add('hidden'); }, 1000);
+      }
+    }
+    log('Empty Threat: you fake a Liar call. The next bot will play more cautiously.');
+    render();
+  }
+
+  // ---- Distillation ----
+  function useDistillation() {
+    if (!_consumableUsableNow('distillation')) return;
+    if ((runState.inventory.distillation || 0) < 1) return;
+    // Find ranks with at least 2 eligible (non-Steel, non-Mirage) hand cards.
+    const buckets = {};
+    for (const c of state.hands[0]) {
+      if (c.affix === 'steel' || c.affix === 'mirage') continue;
+      buckets[c.rank] = buckets[c.rank] || [];
+      buckets[c.rank].push(c);
+    }
+    const ranks = Object.keys(buckets).filter(r => buckets[r].length >= 2);
+    if (ranks.length === 0) {
+      log('Distillation: no two same-rank cards available.');
+      return;
+    }
+    const { modal, body } = _consumableModal('betaDistillModal', {
+      borderColor: 'cyan-400',
+      title: '\u2697 Distillation',
+      subtitle: 'Pick a rank — two of those cards become one with a random affix.',
+    });
+    body.innerHTML = '';
+    const list = document.createElement('div');
+    list.className = 'flex flex-wrap gap-2 justify-center';
+    for (const r of ranks) {
+      const btn = document.createElement('button');
+      btn.className = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded cursor-pointer hover:scale-105 transition ring-2 ring-cyan-300';
+      btn.textContent = r;
+      btn.title = buckets[r].length + ' available';
+      btn.addEventListener('click', () => {
+        const cards = buckets[r];
+        const a = cards[0], b = cards[1];
+        // Remove both from hand
+        state.hands[0] = state.hands[0].filter(c => c.id !== a.id && c.id !== b.id);
+        // Forge a new card with random affix
+        const pool = ['gilded', 'glass', 'spiked', 'cursed', 'mirage', 'hollow', 'echo', null];
+        const newAffix = pool[Math.floor(Math.random() * pool.length)];
+        const newCard = {
+          rank: r,
+          id: 'distill_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+          owner: 0,
+          affix: newAffix,
+        };
+        state.hands[0].push(newCard);
+        _consumeCharge('distillation');
+        log('Distillation: 2x ' + r + ' -> 1x ' + r + (newAffix ? ' [' + newAffix + ']' : ' (plain)') + '.');
+        modal.classList.add('hidden');
+        render();
+      });
+      list.appendChild(btn);
+    }
+    body.appendChild(list);
+  }
+
+  // ---- Pickpocket ----
+  // Affix weight model: positive (gilded, mirage, echo) = heavy; neutral
+  // (no affix, hollow, spiked, cursed) = standard; steel = very low.
+  function _pickpocketWeight(card) {
+    if (card.rank === 'J') return 0;            // Jacks excluded
+    const a = card.affix;
+    if (a === 'steel') return 0.2;
+    if (a === 'gilded' || a === 'mirage' || a === 'echo') return 3.0;
+    if (a === 'cursed' || a === 'spiked') return 0.6;
+    if (a === 'hollow') return 0.9;
+    return 1.0;                                  // plain
+  }
+
+  function usePickpocket() {
+    if (!_consumableUsableNow('pickpocket')) return;
+    if ((runState.inventory.pickpocket || 0) < 1) return;
+    if (runState.pickpocketUsedThisFloor) return;
+    const targets = [];
+    for (let i = 1; i < NUM_PLAYERS; i++) {
+      if (state.eliminated[i] || state.finished[i]) continue;
+      if (state.hands[i].some(c => c.rank !== 'J')) targets.push(i);
+    }
+    if (targets.length === 0) {
+      log('Pickpocket: no targets with non-Jack cards.');
+      return;
+    }
+    const { modal, body } = _consumableModal('betaPickpocketModal', {
+      borderColor: 'rose-400',
+      title: '\ud83d\udd75 Pickpocket',
+      subtitle: 'Pick an opponent — you steal a random non-Jack (positive affixes weighted higher).',
+    });
+    body.innerHTML = '';
+    const list = document.createElement('div');
+    list.className = 'flex flex-wrap gap-2 justify-center';
+    for (const t of targets) {
+      const btn = document.createElement('button');
+      btn.className = 'bg-rose-700 hover:bg-rose-600 transition px-4 py-3 rounded font-bold';
+      btn.textContent = playerLabel(t) + ' (' + state.hands[t].length + ')';
+      btn.addEventListener('click', () => {
+        const hand = state.hands[t];
+        const eligible = hand.filter(c => c.rank !== 'J');
+        if (eligible.length === 0) { modal.classList.add('hidden'); return; }
+        const weights = eligible.map(_pickpocketWeight);
+        const total = weights.reduce((a, b) => a + b, 0);
+        let r = Math.random() * total;
+        let pickedIdx = 0;
+        for (let k = 0; k < eligible.length; k++) {
+          r -= weights[k];
+          if (r <= 0) { pickedIdx = k; break; }
+        }
+        const card = eligible[pickedIdx];
+        // Remove from target hand and add to ours.
+        state.hands[t] = hand.filter(c => c.id !== card.id);
+        state.hands[0].push(card);
+        _consumeCharge('pickpocket');
+        runState.pickpocketUsedThisFloor = true;
+        log('Pickpocket: stole ' + card.rank + (card.affix ? ' [' + card.affix + ']' : '') + ' from ' + playerLabel(t) + '.');
+        modal.classList.add('hidden');
+        render();
+      });
+      list.appendChild(btn);
+    }
+    body.appendChild(list);
+  }
+
+  // ---- Dead Drop ----
+  function useDeadDrop() {
+    if (!_consumableUsableNow('deadDrop')) return;
+    if ((runState.inventory.deadDrop || 0) < 1) return;
+    if (state.hands[0].length === 0) return;
+    _consumeCharge('deadDrop');
+    const hand = state.hands[0].slice();
+    const dropN = Math.min(3, hand.length);
+    const idsToDrop = shuffle(hand).slice(0, dropN).map(c => c.id);
+    state.hands[0] = state.hands[0].filter(c => !idsToDrop.includes(c.id));
+    let drawn = 0;
+    for (let i = 0; i < dropN; i++) {
+      if (state.drawPile.length === 0) break;
+      state.hands[0].push(state.drawPile.pop());
+      drawn++;
+    }
+    log('Dead Drop: discarded ' + dropN + ', drew ' + drawn + '.');
+    selected.clear();
+    render();
+  }
+
+  // ---- Marked Deck ----
+  const MARKED_DECK_AFFIXES = ['gilded', 'glass', 'spiked', 'cursed', 'steel', 'mirage', 'hollow', 'echo'];
+  function useMarkedDeck() {
+    if (!_consumableUsableNow('markedDeck')) return;
+    if ((runState.inventory.markedDeck || 0) < 1) return;
+    if (runState.markedDeckUsedThisFloor) return;
+    if (state.drawPile.length === 0) {
+      log('Marked Deck: draw pile is empty.');
+      return;
+    }
+    const { modal, body } = _consumableModal('betaMarkedDeckModal', {
+      borderColor: 'fuchsia-400',
+      title: '\ud83c\udca0 Marked Deck',
+      subtitle: 'Pick an affix to apply to a random draw-pile card.',
+    });
+    body.innerHTML = '';
+    const list = document.createElement('div');
+    list.className = 'flex flex-wrap gap-2 justify-center';
+    for (const a of MARKED_DECK_AFFIXES) {
+      const btn = document.createElement('button');
+      btn.className = 'px-3 py-2 rounded font-bold transition ' + 'bg-fuchsia-700 hover:bg-fuchsia-600';
+      btn.textContent = a;
+      btn.addEventListener('click', () => {
+        // Pick a random card from the draw pile and overwrite its affix.
+        const idx = Math.floor(Math.random() * state.drawPile.length);
+        const card = state.drawPile[idx];
+        const old = card.affix;
+        card.affix = a;
+        _consumeCharge('markedDeck');
+        runState.markedDeckUsedThisFloor = true;
+        log('Marked Deck: a draw-pile card now carries ' + a + (old ? ' (was ' + old + ')' : '') + '.');
+        modal.classList.add('hidden');
+        render();
+      });
+      list.appendChild(btn);
+    }
+    body.appendChild(list);
+  }
+
+  // ---- The Joker's Mask ----
+  function useJokersMask() {
+    if (!_consumableUsableNow('jokersMask')) return;
+    if ((runState.inventory.jokersMask || 0) < 1) return;
+    if (state.jokersMaskCardId) {
+      log("Joker's Mask already in play this round.");
+      return;
+    }
+    const eligible = state.hands[0].filter(c => c.rank !== 'J');
+    if (eligible.length === 0) {
+      log("Joker's Mask: no non-Jack cards in hand.");
+      return;
+    }
+    const { modal, body } = _consumableModal('betaJokersMaskModal', {
+      borderColor: 'purple-400',
+      title: "\ud83c\udfad The Joker's Mask",
+      subtitle: 'Pick a non-Jack to count as a Jack toward the curse for the rest of this round.',
+    });
+    body.innerHTML = '';
+    const list = document.createElement('div');
+    list.className = 'flex flex-wrap gap-2 justify-center';
+    for (const c of eligible) {
+      const btn = document.createElement('button');
+      let cls = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded cursor-pointer hover:scale-105 transition';
+      const ring = affixRingClass(c.affix);
+      if (ring) cls += ' ' + ring;
+      else if (c.owner === 0) cls += ' ring-2 ring-emerald-400';
+      btn.className = cls;
+      btn.textContent = c.rank;
+      const cid = c.id;
+      btn.addEventListener('click', () => {
+        state.jokersMaskCardId = cid;
+        _consumeCharge('jokersMask');
+        log("Joker's Mask: a " + c.rank + " is now counted as a Jack for the curse.");
+        modal.classList.add('hidden');
+        // If this immediately triggers the curse, handle it.
+        if (checkJackCurse(0)) return;
+        render();
+      });
+      list.appendChild(btn);
+    }
+    body.appendChild(list);
+  }
+
+  // ---- Mirror Shard ----
+  function useMirrorShard() {
+    if (!_consumableUsableNow('mirrorShard')) return;
+    if ((runState.inventory.mirrorShard || 0) < 1) return;
+    if (state.mirrorShardArmed) {
+      log('Mirror Shard already armed.');
+      return;
+    }
+    _consumeCharge('mirrorShard');
+    state.mirrorShardArmed = true;
+    log('Mirror Shard armed: the next Liar call against you reveals only the result.');
+    render();
+  }
+
+    // ============================================================
   // Wire up Phase 3 buttons
   // ============================================================
 
@@ -3584,6 +5943,23 @@
     if (modal) modal.classList.add('hidden');
   }
 
+  // Resume an in-progress run. If a round is live (state != null) show the
+  // game panel and re-render. Otherwise we lost the round state somehow —
+  // start a fresh round on the current floor.
+  function resumeBetaRun() {
+    if (!runState) { backToIntro(); return; }
+    hideAllPanels();
+    document.getElementById('betaGame').classList.remove('hidden');
+    if (state && !state.gameOver) {
+      render();
+      if (!state.challengeOpen && state.currentTurn !== 0) {
+        setTimeout(botTurn, BOT_TURN_DELAY_MS);
+      }
+    } else {
+      startRound();
+    }
+  }
+
   const _betaTestBtn = document.getElementById('betaTestBtn');
   if (_betaTestBtn) {
     _betaTestBtn.addEventListener('click', () => {
@@ -3621,13 +5997,6 @@
   document.getElementById('betaCounterfeitCancelBtn').addEventListener('click', cancelCounterfeit);
   const _dtBtn = document.getElementById('betaDoubletalkBtn');
   if (_dtBtn) _dtBtn.addEventListener('click', toggleDoubletalk);
-  const _sohBtn = document.getElementById('betaSleightBtn');
-  if (_sohBtn) _sohBtn.addEventListener('click', useSleightOfHand);
-  const _ldBtn = document.getElementById('betaLoadedDieBtn');
-  if (_ldBtn) _ldBtn.addEventListener('click', useLoadedDie);
-
-})();
-ick', toggleDoubletalk);
   const _sohBtn = document.getElementById('betaSleightBtn');
   if (_sohBtn) _sohBtn.addEventListener('click', useSleightOfHand);
   const _ldBtn = document.getElementById('betaLoadedDieBtn');
