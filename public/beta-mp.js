@@ -571,9 +571,15 @@
       }
     }
 
-    // Continue button (only after resolved or never picked, but you have to pick first)
+    // Continue button:
+    //   - not shopping → standard "Continue to Floor N" once a fork is picked
+    //   - shopping     → "Done shopping — continue" so the player can leave
+    //     the shop without backing out via a different path. Earlier this
+    //     button was hidden during shop-browsing, leaving players stuck.
     if (myPick && myPick !== 'shop-browsing') {
       html += '<button id="betaMpContinueForkBtn" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold">Continue to Floor ' + offer.nextFloor + '</button>';
+    } else if (myPick === 'shop-browsing') {
+      html += '<button id="betaMpContinueForkBtn" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold">Done shopping — continue to Floor ' + offer.nextFloor + '</button>';
     }
     // Show waiting status
     const ready = Object.values(s.forkPicks || {}).filter(v => v === 'continue').length;
@@ -1054,12 +1060,21 @@
     }
     renderGameStatusExtras();
 
-    // Show/hide fork panel based on phase
+    // Show/hide fork panel based on phase. When in a non-round phase
+    // (fork or bossRelic), also hide the in-round game UI so the fork
+    // panel takes the full focus — matches the solo experience where
+    // the shop replaces the game area instead of stacking below it.
     const forkPanel = document.getElementById('betaMpFork');
+    const gamePanel = document.getElementById('betaMpGame');
+    const inForkPhase = (s.phase === 'fork') || (s.phase === 'bossRelic');
     if (forkPanel) {
       if (s.phase === 'fork') renderForkPhase();
       else if (s.phase === 'bossRelic' && typeof renderBossRelicPhase === 'function') renderBossRelicPhase();
       else forkPanel.classList.add('hidden');
+    }
+    if (gamePanel) {
+      if (inForkPhase) gamePanel.classList.add('hidden');
+      else gamePanel.classList.remove('hidden');
     }
 
     // Host-only admin panel

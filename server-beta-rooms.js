@@ -234,6 +234,18 @@ function newBetaRoom(id) {
 function findPlayerById(room, id) { return room.players.find(p => p.id === id); }
 function findPlayerBySocket(room, sid) { return room.players.find(p => p.socketId === sid); }
 
+// Joker slot count is a flat 5 across the game now (was 2). This helper
+// migrates any older player object (which was created with a 2-slot array)
+// up to the new size by appending nulls. Idempotent — calling it on a
+// 5-slot array does nothing. Called from every joker-touching code path
+// so existing in-progress runs can use the full 5 slots immediately.
+const PVP_JOKER_SLOTS = 5;
+function ensurePlayerJokerSlots(p) {
+  if (!p) return;
+  if (!Array.isArray(p.jokers)) p.jokers = [];
+  while (p.jokers.length < PVP_JOKER_SLOTS) p.jokers.push(null);
+}
+
 // ---------- Public state shape (sent to clients) ----------
 function publicBetaState(room, requestingPlayerId) {
   const me = requestingPlayerId ? findPlayerById(room, requestingPlayerId) : null;
@@ -312,7 +324,14 @@ function publicBetaState(room, requestingPlayerId) {
       eliminated: !!p.eliminated,
       finishedThisRound: !!p.finishedThisRound,
       connected: !!p.connected,
-      jokers: (p.jokers || []).map(j => j ? { id: j.id, name: j.name, rarity: j.rarity, desc: j.desc } : null),
+      // Pad to 5 slots so any legacy 2-slot player object on the server
+      // surfaces as a full 5-slot UI on the client. Doesn't mutate the
+      // server-side array — the migration call elsewhere does that.
+      jokers: (() => {
+        const arr = (p.jokers || []).map(j => j ? { id: j.id, name: j.name, rarity: j.rarity, desc: j.desc } : null);
+        while (arr.length < PVP_JOKER_SLOTS) arr.push(null);
+        return arr;
+      })(),
       relics: (p.relics || []).slice(),
       inventoryCount: Object.values(p.inventory || {}).reduce((a, b) => a + b, 0),
     })),
@@ -1663,6 +1682,7 @@ function rewardPick(room, playerId, choice) {
   const item = offer.find(o => o.id === itemId);
   if (!item) return { error: 'Item not in your offer.' };
   if (playerHasJoker(p, item.id)) return { error: 'Already equipped.' };
+  ensurePlayerJokerSlots(p); // legacy 2-slot players get grown to 5
   if (p.jokers.every(j => j !== null)) return { error: 'All joker slots full — take 75g instead.' };
   const data = JOKER_CATALOG[item.id];
   if (!data) return { error: 'Unknown joker.' };
@@ -1727,8 +1747,9 @@ function shopBuy(room, playerId, itemId) {
   item._realPrice = realPrice;
   if (item.type === 'joker') {
     if (playerHasJoker(p, item.id)) return { error: 'Already equipped.' };
+    ensurePlayerJokerSlots(p); // grow legacy 2-slot players to 5
     const slotIdx = p.jokers.findIndex(j => j === null);
-    if (slotIdx === -1) return { error: 'Both joker slots full.' };
+    if (slotIdx === -1) return { error: 'All joker slots full (' + p.jokers.length + ').' };
     const data = JOKER_CATALOG[item.id];
     if (!data) return { error: 'Unknown joker.' };
     p.gold -= (item._realPrice != null ? item._realPrice : item.price);

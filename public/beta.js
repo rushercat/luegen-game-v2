@@ -3173,15 +3173,39 @@
     renderLog();
   }
 
+  // Helper used by both the per-tile click listener and the delegated
+  // fallback. Opens the info modal for the joker at the given slot index.
+  function _openJokerSlotModal(idx) {
+    if (!runState || !runState.jokers) return;
+    const jk = runState.jokers[idx];
+    if (!jk) return;
+    const stk = (jk.stackable && runState.jokerStacks && runState.jokerStacks[jk.id])
+      ? runState.jokerStacks[jk.id] : 1;
+    const subtitle = '[' + (jk.rarity || 'Joker') + '] · slot ' + (idx + 1) +
+      (jk.stackable ? ' · stack ' + stk + '/' + (jk.maxStack || 1) : '');
+    if (typeof showInfoModal === 'function') {
+      showInfoModal(jk.name, subtitle, jk.desc || '(no description)');
+    } else {
+      // Last-resort fallback so the player at least sees the description.
+      alert(jk.name + '\n' + subtitle + '\n\n' + (jk.desc || ''));
+    }
+  }
+
   function renderJokerRow() {
     if (!runState) return;
     const jokerRow = document.getElementById('betaJokerRow');
     const surveyorMarker = document.getElementById('betaSurveyorInfo');
     if (!jokerRow) return;
 
-    // Wipe existing slot tiles and rebuild from scratch. We use event
-    // delegation on the row container instead of attaching per-tile
-    // listeners, so clicks can't get lost when the row re-renders mid-click.
+    // Belt-and-suspenders click handling. Earlier the click-to-open was
+    // unreliable: per-tile listeners got nuked on every render, and a single
+    // delegated listener on the row could be lost if the row got recreated.
+    // Now we do BOTH: a delegated listener on the row that survives any
+    // re-render, AND a fresh per-tile listener so even if delegation breaks
+    // for any reason (CSS pointer-events, child-span eating the bubble) the
+    // per-tile click still fires.
+
+    // Wipe existing slot tiles and rebuild from scratch.
     Array.from(jokerRow.querySelectorAll('[id^="betaJokerSlot"]')).forEach(el => el.remove());
     const slots = runState.jokers.length;
     for (let i = 0; i < slots; i++) {
@@ -3193,12 +3217,32 @@
         // Stack indicator for stackable jokers (e.g. Sixth Sense ×2/3).
         const stk = (j.stackable && runState.jokerStacks && runState.jokerStacks[j.id])
           ? runState.jokerStacks[j.id] : 0;
+        // pe="pointer-events:none" — inline style on every child so clicks
+        // always land on the slot div itself, not the inner span/pill. This
+        // is the belt to Tailwind's pointer-events-none suspenders, in case
+        // a build pipeline strips utility classes that aren't seen elsewhere.
+        const pe = ' style="pointer-events:none;"';
         const stackPill = stk > 1
-          ? ' <span class="ml-1 inline-block bg-yellow-400 text-black px-1 rounded text-[10px] font-bold">×' + stk + '</span>'
+          ? ' <span class="ml-1 inline-block bg-yellow-400 text-black px-1 rounded text-[10px] font-bold pointer-events-none"' + pe + '>×' + stk + '</span>'
           : '';
         div.className = 'inline-flex items-center gap-1 px-2 py-1 rounded bg-purple-900/40 cursor-pointer hover:bg-purple-800/60 transition select-none';
-        div.title = (j.name + ' — ' + (j.desc || ''));
-        div.innerHTML = '<span class="font-bold text-purple-200">' + escapeHtml(j.name) + '</span>' + stackPill;
+        div.style.cursor = 'pointer';
+        div.title = 'Click for details — ' + j.name;
+        div.setAttribute('role', 'button');
+        div.setAttribute('tabindex', '0');
+        div.innerHTML = '<span class="font-bold text-purple-200 pointer-events-none"' + pe + '>' +
+                        escapeHtml(j.name) + '</span>' + stackPill;
+        // Per-tile listeners (capture phase + click + keyboard for accessibility).
+        const idxLocal = i;
+        const handler = (e) => {
+          if (e && e.preventDefault) e.preventDefault();
+          if (e && e.stopPropagation) e.stopPropagation();
+          _openJokerSlotModal(idxLocal);
+        };
+        div.addEventListener('click', handler);
+        div.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') handler(e);
+        });
       } else {
         div.className = 'inline-flex items-center gap-1 px-2 py-1 rounded bg-black/40';
         div.innerHTML = '<span class="italic text-white/40">Empty</span>';
@@ -3207,22 +3251,19 @@
       else                jokerRow.appendChild(div);
     }
 
-    // Event delegation: install once, survives every re-render. Clicks on a
-    // joker tile (or its child span) bubble up; we walk up to find the slot.
+    // Delegated fallback. Re-attach every render, but track via a property so
+    // we don't pile up listeners on the same row element. If the property
+    // already says "wired" but the row was replaced elsewhere, we'll still
+    // attach a fresh listener (which is harmless given the per-tile handlers
+    // already running).
     if (!jokerRow._jokerClickWired) {
       jokerRow._jokerClickWired = true;
       jokerRow.addEventListener('click', (e) => {
-        const target = e.target.closest('[data-slot-idx]');
+        const target = e.target && e.target.closest && e.target.closest('[data-slot-idx]');
         if (!target) return;
         const idx = parseInt(target.dataset.slotIdx, 10);
         if (isNaN(idx)) return;
-        const jk = runState && runState.jokers && runState.jokers[idx];
-        if (!jk) return;
-        const stk = (jk.stackable && runState.jokerStacks && runState.jokerStacks[jk.id])
-          ? runState.jokerStacks[jk.id] : 1;
-        const subtitle = '[' + (jk.rarity || 'Joker') + '] · slot ' + (idx + 1) +
-          (jk.stackable ? ' · stack ' + stk + '/' + (jk.maxStack || 1) : '');
-        showInfoModal(jk.name, subtitle, jk.desc || '(no description)');
+        _openJokerSlotModal(idx);
       });
     }
     // Surveyor — show top of draw pile when held
@@ -7330,6 +7371,9 @@
     // The Screamer activation. Pass a rank: 'A', 'K', 'Q', or '10'. Once
     // per floor; sets state.screamerRevealedRank for the rest of this round.
     window.lugenUseScreamer = (rank) => useScreamer((rank || '').toUpperCase());
+    // Debug helper: open the info modal for joker slot N (0-indexed). Useful
+    // if the in-game click fails for any reason — call lugenInspectJoker(0).
+    window.lugenInspectJoker = (idx) => _openJokerSlotModal(idx | 0);
     window.lugenToggleWhisper = () => {
       if (!runState || !runState.character || !runState.character.whisperPeek) {
         console.log('[Whisper] Active character is not The Whisper.');
