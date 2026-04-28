@@ -23,6 +23,21 @@
       0%, 100% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.7); }
       50%      { box-shadow: 0 0 0 12px rgba(250, 204, 21, 0); }
     }
+    /* Mirage: rainbow border that cycles through hues. */
+    .card-rainbow {
+      animation: rainbow-border 3s linear infinite;
+    }
+    @keyframes rainbow-border {
+      0%   { box-shadow: 0 0 0 2px #ff0080; }
+      16%  { box-shadow: 0 0 0 2px #ff8c00; }
+      33%  { box-shadow: 0 0 0 2px #ffd700; }
+      50%  { box-shadow: 0 0 0 2px #00d26a; }
+      66%  { box-shadow: 0 0 0 2px #00bfff; }
+      83%  { box-shadow: 0 0 0 2px #8a2be2; }
+      100% { box-shadow: 0 0 0 2px #ff0080; }
+    }
+    /* When a rainbow card is selected, keep the rainbow but add a yellow inner halo. */
+    .card-rainbow.selected { transform: translateY(-14px); }
     .scrollbar-thin::-webkit-scrollbar { width: 6px; }
     .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px; }
   </style>
@@ -619,7 +634,7 @@
           <button data-beta-affix="spiked" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-red-400" style="width:32px;height:44px;">A</div><span>Spiked</span></button>
           <button data-beta-affix="cursed" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-purple-500" style="width:32px;height:44px;">A</div><span>Cursed</span></button>
           <button data-beta-affix="steel" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-gray-300" style="width:32px;height:44px;">A</div><span>Steel</span></button>
-          <button data-beta-affix="mirage" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-pink-400" style="width:32px;height:44px;">A</div><span>Mirage</span></button>
+          <button data-beta-affix="mirage" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face card-rainbow flex items-center justify-center text-base font-bold text-black rounded" style="width:32px;height:44px;">A</div><span>Mirage</span></button>
           <button data-beta-affix="hollow" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-indigo-400" style="width:32px;height:44px;">A</div><span>Hollow</span></button>
           <button data-beta-affix="echo" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-fuchsia-400" style="width:32px;height:44px;">A</div><span>Echo</span></button>
         </div>
@@ -716,7 +731,7 @@
       <button id="betaMpPassBtn" class="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded font-bold transition disabled:opacity-40 disabled:cursor-not-allowed">Pass</button>
       <button id="betaMpLiarBtn" class="bg-rose-600 hover:bg-rose-500 px-6 py-2 rounded font-bold transition disabled:opacity-40 disabled:cursor-not-allowed">LIAR!</button>
     </div>
-    <div id="betaMpLog" class="bg-black/30 rounded-lg p-3 text-xs max-h-40 overflow-y-auto"></div>
+    <div id="betaMpLog" class="hidden bg-black/30 rounded-lg p-3 text-xs max-h-40 overflow-y-auto"></div>
 
     <!-- Host-only admin cheat panel (shown only to the room host) -->
     <details id="betaMpAdminPanel" class="hidden mt-3 bg-black/30 rounded-lg border border-rose-500/30 p-3 text-xs">

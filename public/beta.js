@@ -424,6 +424,7 @@
     deadHand:      { id: 'deadHand',      name: 'Dead Hand',      rarity: 'Legendary', price: 400, desc: "Once per floor: when you take the pile, the first 2 Jacks stay in the pile (sent to the bottom of the draw pile instead of your hand)." },
     patron:        { id: 'patron',        name: 'The Patron',     rarity: 'Legendary', price: 400, desc: "+1g per Gilded card in your hand on every turn (stacks with Gilded's base +2g)." },
     hometownHero:  { id: 'hometownHero',  name: 'Hometown Hero',   rarity: 'Uncommon',  price: 150, desc: 'Each round: at least 50% of your starting hand is drawn from your own run deck (vs. 30% baseline).' },
+    alchemist:     { id: 'alchemist',     name: 'The Alchemist',   rarity: 'Rare',      price: 250, desc: 'Once per round: transform a hand card (even Steel) into a different card with a random positive affix (Gilded / Mirage / Echo / Hollow).' },
   };
   const SLOW_HAND_WINDOW_MS = 10000;
   const SPIKED_TRAP_DRAWS = 3;
@@ -535,6 +536,7 @@
     { id: 'deadHand',     name: 'JOKER · Dead Hand',      price: 400, desc: '[Legendary] Once per floor: 2 Jacks in a pile you take are kept out of your hand.',                             enabled: true, type: 'joker' },
     { id: 'patron',       name: 'JOKER · The Patron',     price: 400, desc: '[Legendary] +1g per Gilded card in hand each turn (stacks with Gilded base).',                                  enabled: true, type: 'joker' },
     { id: 'hometownHero', name: 'JOKER · Hometown Hero',  price: 150, desc: '[Uncommon] Starting hand draws at least 50% from your own run deck (vs 30% base).',                                  enabled: true, type: 'joker' },
+    { id: 'alchemist',    name: 'JOKER · The Alchemist',   price: 250, desc: '[Rare] Once per round: transform a hand card (any, even Steel) into a different card with a random positive affix.', enabled: true, type: 'joker' },
   ];
 
   // Phase 3: random events at the Event fork node.
@@ -1108,6 +1110,7 @@
       mirrorShardArmed: false,   // Mirror Shard: blind the next reveal against you
       emptyThreatPending: false, // Empty Threat: next bot bluffs cautiously once
       magicianUsedThisRound: false, // Magician character: per-round transform
+      alchemistUsedThisRound: false, // Alchemist joker: per-round transform
       stackedHandActive: !!(runState && runState.stackedHandPending), // Stacked Hand: own-deck +20% this round
       // Achievement: Liar's Tongue tracks human lies per round.
       humanLiesThisRound: 0,
@@ -1941,12 +1944,21 @@
       log('Echoing: ' + playerLabel(playerIdx) + "'s first card is a " + c.rank + '.');
     }
 
-    // Phase 5: Mirage is a one-time wildcard — when played, remove it from
-    // the human's run deck so it never returns.
+    // Mirage: 3-use wildcard. Track usage on the run-deck card; remove only
+    // after the third resolution.
     for (const card of cards) {
       if (card.affix === 'mirage' && card.owner === 0) {
-        runState.runDeck = runState.runDeck.filter(c => c.id !== card.id);
-        log('Your Mirage is consumed (one-time wildcard).');
+        const deckCard = runState.runDeck.find(c => c.id === card.id);
+        if (deckCard) {
+          deckCard.mirageUses = (deckCard.mirageUses || 0) + 1;
+          if (deckCard.mirageUses >= 3) {
+            runState.runDeck = runState.runDeck.filter(c => c.id !== card.id);
+            log('Your Mirage is consumed (3rd and final use).');
+          } else {
+            const left = 3 - deckCard.mirageUses;
+            log('Your Mirage triggers — ' + left + ' use' + (left === 1 ? '' : 's') + ' left.');
+          }
+        }
       }
     }
 
@@ -3376,7 +3388,7 @@
       case 'spiked': return 'ring-2 ring-red-400';
       case 'cursed': return 'ring-2 ring-purple-500';
       case 'steel':  return 'ring-2 ring-gray-300';
-      case 'mirage': return 'ring-2 ring-pink-400';
+      case 'mirage': return 'card-rainbow';
       case 'hollow': return 'ring-2 ring-indigo-400';
       case 'echo':   return 'ring-2 ring-fuchsia-400';
       default: return null;
@@ -3691,6 +3703,10 @@
                       !state.magicianUsedThisRound && state.hands[0].length > 0;
     _ensureJokerActionButton('betaMagicianBtn', 'fuchsia', '\u2728 Transmute',
       magUsable, onMagicianClick);
+    // The Alchemist joker: once per round, transform a hand card to a positive-affixed card.
+    const alchUsable = myTurn && hasJoker('alchemist') && !state.alchemistUsedThisRound && state.hands[0].length > 0;
+    _ensureJokerActionButton('betaAlchemistBtn', 'pink', '\u2697 Alchemy',
+      alchUsable, onAlchemistClick);
     // Doppelganger label changes if armed.
     const dgBtn = document.getElementById('betaDoppelgangerBtn');
     if (dgBtn && myTurn && hasJoker('doppelganger')) {
@@ -3987,6 +4003,79 @@
       cardsDiv.appendChild(btn);
     }
     modal.querySelector('#magCancel').addEventListener('click', () => modal.classList.add('hidden'));
+    modal.classList.remove('hidden');
+  }
+
+  // The Alchemist joker — pick a hand card, transform it into a different
+  // card with a random positive affix. Works on any rank/affix, including
+  // Steel cards (this joker bypasses the usual Steel-immunity).
+  function onAlchemistClick() {
+    if (!hasJoker('alchemist')) return;
+    if (state.alchemistUsedThisRound) return;
+    if (state.gameOver || state.challengeOpen || state.currentTurn !== 0) return;
+    if (state.hands[0].length === 0) return;
+    let modal = document.getElementById('betaAlchemistModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'betaAlchemistModal';
+      modal.className = 'fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4';
+      document.body.appendChild(modal);
+    }
+    modal.innerHTML =
+      '<div class="bg-slate-800 border-2 border-pink-400 p-6 rounded-2xl shadow-2xl max-w-lg w-full">' +
+        '<h3 class="text-xl font-bold mb-1 text-center">\u2697 Alchemy</h3>' +
+        '<p class="text-xs text-emerald-200 mb-3 text-center">Pick a hand card. It becomes a different card with a random positive affix (Gilded / Mirage / Echo / Hollow).</p>' +
+        '<div id="alchCards" class="flex flex-wrap gap-2 justify-center mb-4"></div>' +
+        '<div class="text-center"><button id="alchCancel" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg text-sm">Cancel</button></div>' +
+      '</div>';
+    const cardsDiv = modal.querySelector('#alchCards');
+    cardsDiv.innerHTML = '';
+    const order = ['A','K','Q','10','J'];
+    const sorted = state.hands[0].slice().sort((a, b) => {
+      const ai = order.indexOf(a.rank), bi = order.indexOf(b.rank);
+      if (ai !== bi) return ai - bi;
+      return a.id.localeCompare(b.id);
+    });
+    const POSITIVE_AFFIXES = ['gilded', 'mirage', 'echo', 'hollow'];
+    const RANKS_NON_J = ['A', 'K', 'Q', '10'];
+    for (const c of sorted) {
+      const btn = document.createElement('button');
+      let cls = 'card card-face flex items-center justify-center text-2xl font-bold text-black rounded cursor-pointer hover:scale-105 transition';
+      const ring = affixRingClass(c.affix);
+      if (ring) cls += ' ' + ring;
+      else if (c.owner === 0) cls += ' ring-2 ring-emerald-400';
+      btn.className = cls;
+      btn.textContent = c.rank;
+      const cid = c.id;
+      btn.addEventListener('click', () => {
+        const card = state.hands[0].find(x => x.id === cid);
+        if (!card) { modal.classList.add('hidden'); return; }
+        // Pick a random rank (non-Jack) different from current.
+        const rankCandidates = RANKS_NON_J.filter(r => r !== card.rank);
+        let newRank = rankCandidates[Math.floor(Math.random() * rankCandidates.length)];
+        // Pick a random positive affix.
+        let newAffix = POSITIVE_AFFIXES[Math.floor(Math.random() * POSITIVE_AFFIXES.length)];
+        // Ensure overall signature differs from current. (If by chance they
+        // match, reroll the affix once — different rank already guarantees
+        // difference, but keep this guard for safety.)
+        if (newRank === card.rank && newAffix === card.affix) {
+          newAffix = POSITIVE_AFFIXES[(POSITIVE_AFFIXES.indexOf(newAffix) + 1) % POSITIVE_AFFIXES.length];
+        }
+        const oldRank = card.rank, oldAffix = card.affix || null;
+        card.rank = newRank;
+        card.affix = newAffix;
+        // Reset Mirage use counter if the new affix is Mirage.
+        if (newAffix === 'mirage') card.mirageUses = 0;
+        state.alchemistUsedThisRound = true;
+        log('Alchemy: ' + oldRank + (oldAffix ? '['+oldAffix+']' : '') +
+            ' -> ' + newRank + ' [' + newAffix + ']');
+        modal.classList.add('hidden');
+        if (checkJackCurse(0)) return;
+        render();
+      });
+      cardsDiv.appendChild(btn);
+    }
+    modal.querySelector('#alchCancel').addEventListener('click', () => modal.classList.add('hidden'));
     modal.classList.remove('hidden');
   }
 
@@ -4465,6 +4554,25 @@
 
     // Relics removed from the regular shop — awarded post-boss only.
     runState.shopOffer = [].concat(pickedConsumables, pickedJokers);
+
+    // Cards section — 3 randomly-rolled run-deck cards per shop visit.
+    // 50% chance of a positive-or-neutral affix; never Cursed.
+    const SHOP_CARD_AFFIXES = ['gilded', 'mirage', 'echo', 'hollow', 'glass', 'steel', 'spiked'];
+    const SHOP_CARD_RANKS = ['A', 'K', 'Q', '10'];
+    const SHOP_CARD_PRICE = 100;
+    runState.shopCardOffer = [];
+    for (let i = 0; i < 3; i++) {
+      const rank = SHOP_CARD_RANKS[Math.floor(Math.random() * SHOP_CARD_RANKS.length)];
+      const hasAffix = Math.random() < 0.5;
+      const affix = hasAffix ? SHOP_CARD_AFFIXES[Math.floor(Math.random() * SHOP_CARD_AFFIXES.length)] : null;
+      runState.shopCardOffer.push({
+        offerId: 'shopcard_' + Date.now() + '_' + i + '_' + Math.floor(Math.random() * 10000),
+        rank: rank,
+        affix: affix,
+        price: SHOP_CARD_PRICE,
+        bought: false,
+      });
+    }
   }
 
   function chooseShop() {
@@ -4740,7 +4848,7 @@
                        (isRelic && ownedRelic) ||
                        floorLocked;
       const row = document.createElement('div');
-      row.className = 'relative bg-black/40 hover:bg-black/50 transition p-3 rounded-xl border border-white/10' +
+      row.className = 'bg-black/40 hover:bg-black/50 transition p-3 rounded-xl border border-white/10' +
                        (item.enabled ? '' : ' opacity-60');
       let btnLabel = item.enabled ? 'Buy' : 'Soon';
       if (isJoker && equipped) btnLabel = 'Equipped';
@@ -4749,13 +4857,15 @@
       else if (floorLocked) btnLabel = 'Floor-locked';
       const priceColor = canAfford ? 'bg-yellow-400 text-black' : 'bg-rose-500 text-white';
       row.innerHTML =
-        '<div class="absolute -top-2 left-3 px-2 py-0.5 rounded-full text-xs font-bold ' + priceColor + '">' + item.price + 'g</div>' +
-        '<div class="font-bold mt-1">' + escapeHtml(item.name) + '</div>' +
+        '<div class="font-bold">' + escapeHtml(item.name) + '</div>' +
         '<div class="text-xs text-emerald-200 mt-1 mb-2">' + escapeHtml(item.desc) + '</div>' +
         '<div class="flex items-center justify-between">' +
           '<div class="text-xs text-emerald-300">Owned: ' + owned + '</div>' +
-          '<button class="bg-yellow-500 hover:bg-yellow-400 text-black transition px-3 py-1 rounded font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"' +
-            (disabled ? ' disabled' : '') + '>' + btnLabel + '</button>' +
+          '<div class="flex items-center gap-2">' +
+            '<span class="' + priceColor + ' px-2 py-0.5 rounded-full text-xs font-bold">' + item.price + 'g</span>' +
+            '<button class="bg-yellow-500 hover:bg-yellow-400 text-black transition px-3 py-1 rounded font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"' +
+              (disabled ? ' disabled' : '') + '>' + btnLabel + '</button>' +
+          '</div>' +
         '</div>';
       const buyBtn = row.querySelector('button');
       if (!disabled) {
@@ -4818,12 +4928,10 @@
       ? runState.shopOffer
       : SHOP_ITEMS;
     const jokers = offer.filter(i => i.type === 'joker');
-    const relics = offer.filter(i => i.type === 'relic');
     const consumables = offer.filter(i => i.type !== 'joker' && i.type !== 'relic');
 
     const sections = [
       ['betaShopJokers', jokers, 'No jokers in stock.'],
-      ['betaShopRelics', relics, 'No relics in stock.'],
       ['betaShopConsumables', consumables, 'No consumables in stock.'],
     ];
     for (const [id, items, emptyMsg] of sections) {
@@ -4838,6 +4946,77 @@
         el.appendChild(_buildShopRow(item));
       }
     }
+
+    // Cards section — fills the slot where Relics used to live.
+    const cardsEl = document.getElementById('betaShopRelics');
+    if (cardsEl) {
+      // Repurpose the section's heading from "Relics" -> "Cards" if not done already.
+      const sectionWrap = cardsEl.closest('.bg-black\\/30');
+      if (sectionWrap) {
+        const h = sectionWrap.querySelector('h3');
+        if (h) {
+          h.innerHTML = '\ud83c\udca0 Cards';
+          h.className = 'text-xs uppercase tracking-widest text-blue-300 font-bold mb-2';
+        }
+        sectionWrap.className = sectionWrap.className.replace('border-pink-500/30', 'border-blue-500/30');
+      }
+      cardsEl.innerHTML = '';
+      const offers = (runState.shopCardOffer || []);
+      if (offers.length === 0) {
+        cardsEl.innerHTML = '<p class="text-xs text-white/40 italic">No cards in stock.</p>';
+      } else {
+        for (const off of offers) cardsEl.appendChild(_buildShopCardRow(off));
+      }
+    }
+  }
+
+  // Build a shop row for a buyable run-deck card (replaces the old Relics
+  // section). Up to 3 per shop visit; each card has 50% chance to come with
+  // a positive-or-neutral affix. Adds the chosen card to the player's run deck.
+  function _buildShopCardRow(off) {
+    const row = document.createElement('div');
+    const cap = (typeof runDeckCap === 'function') ? runDeckCap() : 24;
+    const deckFull = (runState.runDeck || []).length >= cap;
+    const canAfford = runState.gold >= off.price;
+    const disabled = off.bought || !canAfford || deckFull;
+    let btnLabel = off.bought ? 'Bought' : (deckFull ? 'Deck full' : 'Buy');
+    const priceColor = canAfford ? 'bg-yellow-400 text-black' : 'bg-rose-500 text-white';
+    row.className = 'bg-black/40 hover:bg-black/50 transition p-3 rounded-xl border border-white/10' +
+                    (off.bought ? ' opacity-50' : '');
+    const ring = affixRingClass(off.affix);
+    const cardHtml =
+      '<div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ' + (ring || '') + '" style="width:32px;height:44px;">' + escapeHtml(off.rank) + '</div>';
+    row.innerHTML =
+      '<div class="flex items-center gap-3 mb-1">' +
+        cardHtml +
+        '<div>' +
+          '<div class="font-bold">' + escapeHtml(off.rank) + (off.affix ? ' \u00b7 ' + escapeHtml(off.affix) : ' \u00b7 plain') + '</div>' +
+          '<div class="text-xs text-emerald-200">' + (off.affix ? 'Affixed card joins your run deck.' : 'Plain card joins your run deck.') + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="flex items-center justify-between">' +
+        '<div class="text-xs text-emerald-300">Run deck: ' + (runState.runDeck ? runState.runDeck.length : 0) + ' / ' + cap + '</div>' +
+        '<div class="flex items-center gap-2">' +
+          '<span class="' + priceColor + ' px-2 py-0.5 rounded-full text-xs font-bold">' + off.price + 'g</span>' +
+          '<button class="bg-yellow-500 hover:bg-yellow-400 text-black transition px-3 py-1 rounded font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"' + (disabled ? ' disabled' : '') + '>' + btnLabel + '</button>' +
+        '</div>' +
+      '</div>';
+    if (!disabled) {
+      row.querySelector('button').addEventListener('click', () => {
+        if (off.bought || runState.gold < off.price) return;
+        const cap2 = (typeof runDeckCap === 'function') ? runDeckCap() : 24;
+        if ((runState.runDeck || []).length >= cap2) return;
+        runState.gold -= off.price;
+        if (runState.ach) runState.ach.spent = (runState.ach.spent || 0) + off.price;
+        const newId = 'p0_' + off.rank + '_shop_' + Date.now() + '_' + Math.floor(Math.random()*10000);
+        runState.runDeck.push({ rank: off.rank, id: newId, owner: 0, affix: off.affix || null });
+        off.bought = true;
+        log('Bought a ' + off.rank + (off.affix ? ' [' + off.affix + ']' : ' (plain)') +
+            ' for ' + off.price + 'g.');
+        renderShop();
+      });
+    }
+    return row;
   }
 
   // (legacy guard — old loop body removed; original anchor below was for ref only)
@@ -6017,8 +6196,8 @@
     },
     mirage: {
       name: 'Mirage',
-      tag: 'On play (one-time)',
-      desc: 'Treated as a wildcard — always matches the claimed Target Rank. After it resolves, it is removed from your run deck for the rest of the run.',
+      tag: 'On play (3-use)',
+      desc: 'Treated as a wildcard — always matches the claimed Target Rank. After 3 resolutions, it is removed from your run deck for the rest of the run.',
     },
     hollow: {
       name: 'Hollow',
@@ -6028,7 +6207,7 @@
     echo: {
       name: 'Echo',
       tag: 'On play',
-      desc: "After your Echo card hits the pile, the next player's first played card is briefly revealed to you privately (private read).",
+      desc: "When you play an Echo card, its rank is mirrored from one of the previous player's played cards (random pick if they played multiple). It still claims the target rank, so the result depends on whether they told the truth.",
     },
   };
   document.querySelectorAll('button.beta-affix-legend').forEach(btn => {
