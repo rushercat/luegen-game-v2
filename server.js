@@ -1199,6 +1199,36 @@ io.on('connection', async (socket) => {
     betaMP.broadcast(io, room);
   });
 
+  socket.on('beta:pickBossRelic', ({ relicId } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.pickBossRelic(room, player.id, relicId);
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:rewardPick', ({ choice } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.rewardPick(room, player.id, choice || {});
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
+  socket.on('beta:applyCleanse', ({ target } = {}) => {
+    const room = betaMP.betaRooms[currentBetaRoomId];
+    if (!room) return emitBetaError('Not in a beta room.');
+    const player = betaMP.findPlayerBySocket(room, socket.id);
+    if (!player) return emitBetaError('Not in a beta room.');
+    const r = betaMP.applyCleanse(room, player.id, target || {});
+    if (r.error) return emitBetaError(r.error);
+    betaMP.broadcast(io, room);
+  });
+
   socket.on('beta:useConsumable', ({ itemId, options } = {}) => {
     const room = betaMP.betaRooms[currentBetaRoomId];
     if (!room) return emitBetaError('Not in a beta room.');

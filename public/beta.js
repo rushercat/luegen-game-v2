@@ -316,6 +316,11 @@
   }
 
   // Phase 7+: relics — permanent passive bonuses (one of each per run)
+  const BOSS_RELIC_POOL = {
+    auditor: ['crackedCoin', 'loadedDie'],
+    cheater: ['pocketWatch', 'handMirror'],
+    lugen:   ['ironStomach', 'ledger'],
+  };
   const RELIC_CATALOG = {
     crackedCoin: { id: 'crackedCoin', name: 'Cracked Coin', price: 200, desc: 'Each round start: gain 5g × Hearts remaining.' },
     loadedDie:   { id: 'loadedDie',   name: 'Loaded Die',   price: 200, desc: 'Once per floor, reroll the Target Rank for the current round.' },
@@ -847,6 +852,7 @@
 
     const floorJustFinished = runState.currentFloor;
     runState.currentFloor++;
+    ensureSoloJokerSlots(runState.currentFloor);
     runState.roundsWon = new Array(NUM_PLAYERS).fill(0);
     runState.loadedDieUsedThisFloor = false;  // Phase 7+: reset Loaded Die per floor
     runState.tattletaleChargesThisFloor =
@@ -1612,10 +1618,27 @@
 
   function renderJokerRow() {
     if (!runState) return;
-    for (let i = 0; i < 2; i++) {
+    // Ensure DOM has the right number of slots — create or remove as needed.
+    const jokerRow = document.getElementById('betaJokerRow');
+    const surveyorMarker = document.getElementById('betaSurveyorInfo');
+    if (jokerRow && surveyorMarker) {
+      const need = runState.jokers.length;
+      // Remove extras
+      let slot = document.getElementById('betaJokerSlot' + need);
+      while (slot) { slot.remove(); slot = document.getElementById('betaJokerSlot' + (need + (slot ? 1 : 0))); break; }
+      // Easier: remove all betaJokerSlot* and recreate.
+      Array.from(jokerRow.querySelectorAll('[id^="betaJokerSlot"]')).forEach(el => el.remove());
+      for (let i = 0; i < need; i++) {
+        const div = document.createElement('div');
+        div.id = 'betaJokerSlot' + i;
+        div.className = 'inline-flex items-center gap-1 px-2 py-1 rounded bg-black/40';
+        div.innerHTML = '<span class="italic text-white/40">Empty</span>';
+        jokerRow.insertBefore(div, surveyorMarker);
+      }
+    }
+    for (let i = 0; i < runState.jokers.length; i++) {
       const slot = document.getElementById('betaJokerSlot' + i);
       if (!slot) continue;
-      // Reset slot's click listener every render via cloneNode (simplest)
       const fresh = slot.cloneNode(false);
       slot.parentNode.replaceChild(fresh, slot);
       fresh.id = 'betaJokerSlot' + i;
@@ -2132,6 +2155,17 @@
       infused++;
     }
     return infused;
+  }
+
+  function jokerSlotsForFloor(floor) {
+    if (floor <= 3) return 2;
+    if (floor <= 6) return 3;
+    return 5;
+  }
+  function ensureSoloJokerSlots(floor) {
+    if (!runState) return;
+    const want = jokerSlotsForFloor(floor);
+    while (runState.jokers.length < want) runState.jokers.push(null);
   }
 
   // Phase 5: affix → ring color mapping
@@ -2661,13 +2695,8 @@
       remaining.splice(pickedIdx, 1);
     }
 
-    // Relics — pick a random subset, EQUAL weight (no rarity bias).
-    // Already-owned relics are excluded so the player doesn't see dead options.
-    const ownedRelicIds = (runState.relics || []);
-    const relicsPool = SHOP_ITEMS.filter(i => i.type === 'relic' && !ownedRelicIds.includes(i.id));
-    const pickedRelics = shuffle(relicsPool).slice(0, SHOP_OFFER_RELICS);
-
-    runState.shopOffer = [].concat(pickedConsumables, pickedJokers, pickedRelics);
+    // Relics removed from the regular shop — awarded post-boss only.
+    runState.shopOffer = [].concat(pickedConsumables, pickedJokers);
   }
 
   function chooseShop() {

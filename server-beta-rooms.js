@@ -56,6 +56,13 @@ const JOKER_CATALOG = {
 };
 
 // Relic catalog — permanent passive bonuses, one of each per run.
+// Boss-only relic pools. Each boss awards a choice of 2 relics from its pool.
+const BOSS_RELIC_POOL = {
+  auditor: ['crackedCoin', 'loadedDie'],
+  cheater: ['pocketWatch', 'handMirror'],
+  lugen:   ['ironStomach', 'ledger'],
+};
+
 const RELIC_CATALOG = {
   crackedCoin: { id: 'crackedCoin', name: 'Cracked Coin', price: 200, desc: 'Each round start: gain 5g × Hearts remaining.' },
   loadedDie:   { id: 'loadedDie',   name: 'Loaded Die',   price: 200, desc: 'Once per floor: reroll the Target Rank.' },
@@ -63,7 +70,13 @@ const RELIC_CATALOG = {
   handMirror:  { id: 'handMirror',  name: 'Hand Mirror',  price: 250, desc: 'Round start: see one random card from each opponent.' },
   ironStomach: { id: 'ironStomach', name: 'Iron Stomach', price: 300, desc: 'Glass-burned run-deck cards return as Steel at end of round.' },
   ledger:      { id: 'ledger',      name: 'The Ledger',   price: 300, desc: '+25% gold from all sources (stacks).' },
+  // Treasure-only relics (Act III treasure node).
+  shroud:       { id: 'shroud',       name: 'The Shroud',       price: 0, desc: 'Run-deck card borders fade between rounds, harder to track.' },
+  crookedCards: { id: 'crookedCards', name: 'Crooked Cards',    price: 0, desc: 'Once per floor, look at the entire draw pile and rearrange any 5 cards.' },
+  blackMarket:  { id: 'blackMarket',  name: 'Black Market',     price: 0, desc: 'Shop prices 25% lower, but Jack-be-Nimble removed from your shop pool.' },
+  gamblersMark: { id: 'gamblersMark', name: "Gambler's Mark",   price: 0, desc: '+1 joker slot, but you start each floor with one Cursed card forced into your hand.' },
 };
+const TREASURE_RELIC_POOL = ['shroud', 'crookedCards', 'blackMarket', 'gamblersMark'];
 
 // Floor modifiers — Act 2+ non-boss floors roll one of these.
 const FLOOR_MODIFIERS = {
@@ -196,6 +209,7 @@ function newBetaRoom(id) {
     eventResults: {},       // playerId -> { event, gold }
     currentFloorModifier: null,
     currentBoss: null,
+    burnedCards: [],            // cards Glass-burned this round (capped at BURN_CAP, then recycled)
     echoArmedFor: -1,           // playerIdx armed by Echo (peeks the next opponent's first card)
     counterfeitLockedRanks: {}, // playerId -> bool (locks one target rotation)
     counterfeitUsedRound: {},   // playerId -> bool (once per round)
@@ -241,6 +255,8 @@ function publicBetaState(room, requestingPlayerId) {
     currentTurnIdx: room.currentTurnIdx,
     pileSize: room.pile.length,
     drawSize: room.drawPile.length,
+    burnedCount: (room.burnedCards || []).length,
+    burnCap: BURN_CAP,
     lastPlay: room.lastPlay
       ? { playerIdx: room.lastPlay.playerIdx, claim: room.lastPlay.claim, count: room.lastPlay.count }
       : null,
@@ -254,6 +270,13 @@ function publicBetaState(room, requestingPlayerId) {
     currentBoss: room.currentBoss || null,
     forkOffer: room.forkOffer || null,
     forkPicks: Object.assign({}, room.forkPicks || {}),
+    bossRelicOffer: room.bossRelicOffer ? {
+      bossId: room.bossRelicOffer.bossId,
+      bossName: room.bossRelicOffer.bossName,
+      pool: room.bossRelicOffer.pool.slice(),
+      pool_meta: room.bossRelicOffer.pool.map(rid => RELIC_CATALOG[rid]),
+      picks: Object.assign({}, room.bossRelicOffer.picks),
+    } : null,
     shopOffer: (room.shopOffer || []).map(i => ({
       id: i.id, name: i.name, price: i.price, desc: i.desc, type: i.type, enabled: i.enabled,
     })),
@@ -291,6 +314,8 @@ function publicBetaState(room, requestingPlayerId) {
           surveyorTop,
           forkPick: (room.forkPicks && room.forkPicks[me.id]) || null,
           eventResult: (room.eventResults && room.eventResults[me.id]) || null,
+          pendingService: (room.pendingServices && room.pendingServices[me.id]) || null,
+          rewardOffer: (room.rewardOffers && room.rewardOffers[me.id]) || null,
         }
       : null,
   };
@@ -382,6 +407,7 @@ function applyGoldGain(p, n, reason) {
   p.gold = (p.gold || 0) + amt;
   return amt;
 }
+const BURN_CAP = 8;
 const GOLD_PER_GILDED_PER_TURN = 2;
 const SPIKED_DRAWS_ON_PICKUP = 1;
 const GLASS_BURN_RANDOM = 2;
@@ -418,28 +444,40 @@ function applyPickupAffixes(room, picker, pile) {
   //    Iron Stomach restoration at end of round.
   const glassCards = pile.filter(c => c.affix === 'glass');
   for (const glass of glassCards) {
-    if (!pile.includes(glass)) continue;  // already burned by another Glass
-    // Remove the Glass card itself
+    if (!pile.includes(glass)) continue;
+    const burnedThisTrigger = [];
     const gi = pile.indexOf(glass);
     if (gi !== -1) pile.splice(gi, 1);
-    // Track Iron Stomach burns (only for run-deck cards owned by humans)
+    burnedThisTrigger.push(glass);
     if (glass.owner !== undefined && glass.owner >= 0) {
       const owner = room.players[glass.owner];
       if (owner) owner._ironStomachBurned = (owner._ironStomachBurned || []).concat([glass.id]);
     }
-    // Pick GLASS_BURN_RANDOM random non-Steel cards from the remaining pile
     const burnable = pile.filter(c => c.affix !== 'steel');
     const sh = shuffle(burnable);
     const targets = sh.slice(0, GLASS_BURN_RANDOM);
     for (const t of targets) {
       const ti = pile.indexOf(t);
       if (ti !== -1) pile.splice(ti, 1);
+      burnedThisTrigger.push(t);
       if (t.owner !== undefined && t.owner >= 0) {
         const owner = room.players[t.owner];
         if (owner) owner._ironStomachBurned = (owner._ironStomachBurned || []).concat([t.id]);
       }
     }
-    log(room, `Glass: burned 1 + ${targets.length} random non-Steel pile card${targets.length === 1 ? '' : 's'}.`);
+    // Track total burns this round
+    room.burnedCards = (room.burnedCards || []).concat(burnedThisTrigger);
+    log(room, `Glass: burned ${burnedThisTrigger.length} card${burnedThisTrigger.length === 1 ? '' : 's'} (${room.burnedCards.length}/${BURN_CAP} total).`);
+    // Burn cap overflow — when total burns exceed cap, all burned cards
+    // (including this trigger's) shuffle back into the draw pile.
+    if (room.burnedCards.length > BURN_CAP) {
+      const recycled = room.burnedCards.length;
+      // Strip affixes? Design says recycled, not specified. Keep affixes intact.
+      for (const c of room.burnedCards) room.drawPile.push(c);
+      room.drawPile = shuffle(room.drawPile);
+      room.burnedCards = [];
+      log(room, `Burn cap reached — ${recycled} burned cards shuffled back into the draw pile. Counter resets.`);
+    }
   }
   return pile;
 }
@@ -464,6 +502,17 @@ function applyIronStomach(room) {
     if (restored > 0) log(room, `${p.name} - Iron Stomach: restored ${restored} burned card${restored === 1 ? '' : 's'} as Steel.`);
     p._ironStomachBurned = [];
   }
+}
+
+function jokerSlotsForFloor(floor) {
+  // Act I (1-3): 2 slots, Act II (4-6): 3 slots, Act III (7-9): 5 slots.
+  if (floor <= 3) return 2;
+  if (floor <= 6) return 3;
+  return 5;
+}
+function ensureJokerSlots(p, floor) {
+  const want = jokerSlotsForFloor(floor);
+  while ((p.jokers || []).length < want) p.jokers.push(null);
 }
 
 function regenerateShopOffer(room) {
@@ -492,10 +541,8 @@ function regenerateShopOffer(room) {
     pickedJokers.push(remaining[pickedIdx]);
     remaining.splice(pickedIdx, 1);
   }
-  // Relics — pick 2 random, equal weight
-  const relics = SHOP_ITEMS.filter(i => i.type === 'relic');
-  const pickedRelics = shuffle(relics).slice(0, SHOP_OFFER_RELICS);
-  room.shopOffer = [].concat(pickedConsumables, pickedJokers, pickedRelics);
+  // Relics removed from regular shop — they are awarded post-boss only.
+  room.shopOffer = [].concat(pickedConsumables, pickedJokers);
 }
 function addPendingPeek(p, kind, payload) {
   p.pendingPeeks = p.pendingPeeks || [];
@@ -517,7 +564,8 @@ function startRun(room) {
     p.roundsWon = 0;
     p.heartShards = 0;
     p.eliminated = false;
-    p.jokers = [null, null];
+    p.jokers = [];
+    ensureJokerSlots(p, 1);
     p.inventory = {};
     p.relics = [];
     applyCharacter(p);
@@ -572,6 +620,7 @@ function applyFloorAffixesToDrawPile(drawPile, floor) {
 function startRound(room) {
   // Reset round-level state
   room.phase = 'round';
+  room.burnedCards = [];
   for (const p of room.players) {
     p.hand = [];
     p.finishedThisRound = false;
@@ -619,6 +668,12 @@ function startRound(room) {
   }
   room.drawPile = deck;
 
+  // Jack-fairness — no player begins a round at their Jack limit.
+  // Excess Jacks are pushed to the bottom of the draw pile; the top of the
+  // draw pile (non-Jack only) is pulled up as replacements. If swap-eligible
+  // non-Jack cards run out, the swap stops (best-effort).
+  applyJackFairness(room);
+
   // Brittle floor modifier — every card becomes Glass for this round
   if (room.currentFloorModifier === 'brittle') {
     for (const p of room.players) for (const c of p.hand) c.affix = 'glass';
@@ -632,9 +687,11 @@ function startRound(room) {
     }
   }
 
-  // Gambler — forced Cursed card on first round of each floor
+  // Gambler / Gambler's Mark — forced Cursed card on first round of each floor
   for (const p of room.players) {
-    if (p.character && p.character.forcedCursedOnNewFloor && (p.roundsWon || 0) === 0) {
+    const hasMark = playerHasRelic(p, 'gamblersMark');
+    const isGamblerChar = p.character && p.character.forcedCursedOnNewFloor;
+    if ((hasMark || isGamblerChar) && (p.roundsWon || 0) === 0) {
       const r = ['A','K','Q','10'][Math.floor(Math.random()*4)];
       p.hand.push({
         rank: r,
@@ -1165,8 +1222,50 @@ function endFloor(room, winnerIdx) {
     return;
   }
 
-  // Enter the fork phase — players choose Shop/Reward/Event/Treasure individually
+  // Boss floors: each player picks 1 of 2 relics from the boss's pool first.
+  const beatenBoss = room.currentBoss;
+  if (beatenBoss && BOSS_RELIC_POOL[beatenBoss.id]) {
+    enterBossRelicPhase(room, beatenBoss);
+    return;
+  }
+  // Otherwise enter the normal fork phase.
   enterForkPhase(room);
+}
+
+// ---------- Boss-relic offer phase ----------
+function enterBossRelicPhase(room, boss) {
+  room.phase = 'bossRelic';
+  room.bossRelicOffer = {
+    bossId: boss.id,
+    bossName: boss.name,
+    pool: BOSS_RELIC_POOL[boss.id].slice(),
+    picks: {},  // playerId -> relicId picked
+  };
+  log(room, `Post-boss reward — pick 1 of 2 relics from ${boss.name}'s pool.`);
+}
+
+function pickBossRelic(room, playerId, relicId) {
+  if (room.phase !== 'bossRelic') return { error: 'No relic offer active.' };
+  const offer = room.bossRelicOffer;
+  if (!offer) return { error: 'No relic offer active.' };
+  const p = findPlayerById(room, playerId);
+  if (!p) return { error: 'Not in room.' };
+  if (offer.picks[playerId]) return { error: 'Already picked.' };
+  if (!offer.pool.includes(relicId)) return { error: 'Relic not in this pool.' };
+  if (playerHasRelic(p, relicId)) {
+    // Convert to gold instead if already owned (rare edge case)
+    const got = applyGoldGain(p, 75, 'bossRelicGold');
+    log(room, `${p.name} already owns ${relicId} — took ${got}g instead.`);
+  } else {
+    p.relics = (p.relics || []).concat([relicId]);
+    log(room, `${p.name} took the relic ${RELIC_CATALOG[relicId].name}.`);
+  }
+  offer.picks[playerId] = relicId;
+  // If all eligible players have picked, move to fork phase
+  const eligible = room.players.filter(x => !x.eliminated);
+  const allPicked = eligible.every(x => offer.picks[x.id]);
+  if (allPicked) enterForkPhase(room);
+  return { ok: true };
 }
 
 // ---------- Fork phase ----------
@@ -1186,6 +1285,7 @@ function enterForkPhase(room) {
     hasReward: !forkOffersTreasure,
     hasEvent: true,
     hasTreasure: forkOffersTreasure,
+    hasCleanse: true,
   };
   // Generate a new shop offer for this fork
   regenerateShopOffer(room);
@@ -1218,6 +1318,8 @@ function maybeAdvanceFromFork(room) {
       room.tattletaleChargesFloor[p.id] = 1;
     }
   }
+  // Expand joker slots for the new act
+  for (const p of room.players) ensureJokerSlots(p, room.currentFloor);
   log(room, `Advancing to Floor ${room.currentFloor}.`);
   startRound(room);
 }
@@ -1237,24 +1339,37 @@ function pickFork(room, playerId, choice) {
   }
   if (choice === 'reward') {
     if (!room.forkOffer.hasReward) return { error: 'Reward not offered this fork.' };
-    // For MP simplicity: reward grants gold immediately (no upgrade-pick UI yet)
-    const gold = applyGoldGain(p, 60, 'reward');
-    log(room, `${p.name} took the Reward (+${gold}g).`);
-    room.forkPicks[playerId] = 'reward-resolved';
+    if (!room.rewardOffers) room.rewardOffers = {};
+    if (!room.rewardOffers[playerId]) {
+      const ownedIds = (p.jokers || []).filter(j => j).map(j => j.id);
+      const eligible = SHOP_ITEMS.filter(i => i.type === 'joker' &&
+        !ownedIds.includes(i.id) &&
+        ((JOKER_CATALOG[i.id] && JOKER_CATALOG[i.id].rarity) !== 'Legendary'));
+      const picks = shuffle(eligible).slice(0, 2);
+      room.rewardOffers[playerId] = picks.map(p2 => ({
+        id: p2.id, name: p2.name, price: p2.price, desc: p2.desc, type: p2.type,
+      }));
+    }
+    log(room, `${p.name} entered the Reward.`);
+    room.forkPicks[playerId] = 'reward-browsing';
     return { ok: true };
   }
   if (choice === 'treasure') {
     if (!room.forkOffer.hasTreasure) return { error: 'Treasure not offered this fork.' };
-    // Treasure: bigger gold + a guaranteed relic offer (random eligible)
+    // Treasure: bigger gold + a guaranteed treasure-only relic.
     const gold = applyGoldGain(p, 120, 'treasure');
     const owned = p.relics || [];
-    const candidates = SHOP_ITEMS.filter(i => i.type === 'relic' && !owned.includes(i.id));
+    const candidates = TREASURE_RELIC_POOL.filter(rid => !owned.includes(rid));
     if (candidates.length > 0) {
-      const pick = candidates[Math.floor(Math.random() * candidates.length)];
-      p.relics = (p.relics || []).concat([pick.id]);
-      log(room, `${p.name} took the Treasure (+${gold}g + relic ${pick.name}).`);
+      const pickId = candidates[Math.floor(Math.random() * candidates.length)];
+      p.relics = (p.relics || []).concat([pickId]);
+      // Gambler's Mark: +1 joker slot
+      if (pickId === 'gamblersMark') {
+        p.jokers.push(null);
+      }
+      log(room, `${p.name} took the Treasure (+${gold}g + treasure-relic ${RELIC_CATALOG[pickId].name}).`);
     } else {
-      log(room, `${p.name} took the Treasure (+${gold}g, no new relics available).`);
+      log(room, `${p.name} took the Treasure (+${gold}g, no new treasure relics available).`);
     }
     room.forkPicks[playerId] = 'treasure-resolved';
     return { ok: true };
@@ -1276,6 +1391,12 @@ function pickFork(room, playerId, choice) {
     room.forkPicks[playerId] = 'event-resolved';
     return { ok: true };
   }
+  if (choice === 'cleanse') {
+    if (!room.forkOffer.hasCleanse) return { error: 'Cleanse not offered.' };
+    // Mark as browsing — player will send a follow-up applyCleanse to choose target.
+    room.forkPicks[playerId] = 'cleanse-browsing';
+    return { ok: true };
+  }
   if (choice === 'shop') {
     // Shop is interactive — player marks "browsing", buys items via separate events,
     // then sends 'continue' when done.
@@ -1283,6 +1404,68 @@ function pickFork(room, playerId, choice) {
     return { ok: true };
   }
   return { error: 'Unknown fork choice.' };
+}
+
+// Pick a reward joker (or take 75g instead).
+function rewardPick(room, playerId, choice) {
+  const p = findPlayerById(room, playerId);
+  if (!p) return { error: 'Not in room.' };
+  if (room.phase !== 'fork') return { error: 'Reward closed.' };
+  if (!room.rewardOffers || !room.rewardOffers[playerId]) return { error: 'No reward offer.' };
+  if (choice && choice.gold) {
+    const got = applyGoldGain(p, 75, 'rewardGold');
+    log(room, `${p.name} took ${got}g instead of a Reward joker.`);
+    delete room.rewardOffers[playerId];
+    room.forkPicks[playerId] = 'reward-resolved';
+    return { ok: true };
+  }
+  const itemId = choice && choice.itemId;
+  const offer = room.rewardOffers[playerId];
+  const item = offer.find(o => o.id === itemId);
+  if (!item) return { error: 'Item not in your offer.' };
+  if (playerHasJoker(p, item.id)) return { error: 'Already equipped.' };
+  if (p.jokers.every(j => j !== null)) return { error: 'All joker slots full — take 75g instead.' };
+  const data = JOKER_CATALOG[item.id];
+  if (!data) return { error: 'Unknown joker.' };
+  for (let i = 0; i < p.jokers.length; i++) {
+    if (p.jokers[i] === null) { p.jokers[i] = { ...data }; break; }
+  }
+  if (item.id === 'tattletale') {
+    room.tattletaleChargesFloor[p.id] = 1;
+  }
+  log(room, `${p.name} took the Reward joker: ${data.name}.`);
+  delete room.rewardOffers[playerId];
+  room.forkPicks[playerId] = 'reward-resolved';
+  return { ok: true };
+}
+
+// Apply Cleanse — either remove a Cursed run-deck card (rare) or strip an
+// affix from a run-deck card. target shape: { runDeckCardId, action: 'strip' }
+// or { handCardId, action: 'removeCursed' }
+function applyCleanse(room, playerId, target) {
+  const p = findPlayerById(room, playerId);
+  if (!p) return { error: 'Not in room.' };
+  if (room.phase !== 'fork') return { error: 'Not in fork.' };
+  if (room.forkPicks[playerId] !== 'cleanse-browsing') return { error: 'Pick Cleanse first.' };
+  target = target || {};
+  if (target.action === 'strip') {
+    const card = (p.runDeck || []).find(c => c.id === target.runDeckCardId);
+    if (!card) return { error: 'Run-deck card not found.' };
+    if (!card.affix) return { error: 'That card has no affix to strip.' };
+    log(room, `${p.name} cleansed: stripped ${card.affix} from a ${card.rank}.`);
+    card.affix = null;
+    room.forkPicks[playerId] = 'cleanse-resolved';
+    return { ok: true };
+  }
+  if (target.action === 'removeCursed') {
+    const card = (p.runDeck || []).find(c => c.id === target.runDeckCardId && c.affix === 'cursed');
+    if (!card) return { error: 'Cursed run-deck card not found.' };
+    p.runDeck = p.runDeck.filter(c => c.id !== card.id);
+    log(room, `${p.name} cleansed: removed a Cursed ${card.rank} from their run deck.`);
+    room.forkPicks[playerId] = 'cleanse-resolved';
+    return { ok: true };
+  }
+  return { error: 'Pick action: strip or removeCursed.' };
 }
 
 // Buy from the shared shop offer; player-side gold check.
@@ -1293,14 +1476,23 @@ function shopBuy(room, playerId, itemId) {
   const item = (room.shopOffer || []).find(i => i.id === itemId);
   if (!item) return { error: 'Item not in shop offer.' };
   if (!item.enabled) return { error: 'Item not available.' };
-  if ((p.gold || 0) < item.price) return { error: 'Not enough gold.' };
+  // Black Market: skip Jack-be-Nimble for owners.
+  if (playerHasRelic(p, 'blackMarket') && item.id === 'jackBeNimble') {
+    return { error: "Black Market: Jack-be-Nimble removed from your shop pool." };
+  }
+  // Black Market: 25% discount on the actual cost.
+  const discount = playerHasRelic(p, 'blackMarket') ? 0.75 : 1;
+  const realPrice = Math.ceil(item.price * discount);
+  if ((p.gold || 0) < realPrice) return { error: 'Not enough gold.' };
+  // Override the deduction below by stashing realPrice on the closure.
+  item._realPrice = realPrice;
   if (item.type === 'joker') {
     if (playerHasJoker(p, item.id)) return { error: 'Already equipped.' };
     const slotIdx = p.jokers.findIndex(j => j === null);
     if (slotIdx === -1) return { error: 'Both joker slots full.' };
     const data = JOKER_CATALOG[item.id];
     if (!data) return { error: 'Unknown joker.' };
-    p.gold -= item.price;
+    p.gold -= (item._realPrice != null ? item._realPrice : item.price);
     p.jokers[slotIdx] = { ...data };
     if (item.id === 'tattletale') {
       room.tattletaleChargesFloor[p.id] = 1;
@@ -1310,13 +1502,13 @@ function shopBuy(room, playerId, itemId) {
   }
   if (item.type === 'relic') {
     if (playerHasRelic(p, item.id)) return { error: 'Already owned.' };
-    p.gold -= item.price;
+    p.gold -= (item._realPrice != null ? item._realPrice : item.price);
     p.relics = (p.relics || []).concat([item.id]);
     log(room, `${p.name} acquired relic: ${item.name} (-${item.price}g).`);
     return { ok: true };
   }
   if (item.type === 'consumable') {
-    p.gold -= item.price;
+    p.gold -= (item._realPrice != null ? item._realPrice : item.price);
     p.inventory[item.id] = (p.inventory[item.id] || 0) + 1;
     log(room, `${p.name} bought ${item.name} (-${item.price}g).`);
     return { ok: true };
@@ -1326,7 +1518,7 @@ function shopBuy(room, playerId, itemId) {
     if (!room.pendingServices) room.pendingServices = {};
     if (room.pendingServices[playerId]) return { error: 'You already have a service to apply.' };
     if ((p.gold || 0) < item.price) return { error: 'Not enough gold.' };
-    p.gold -= item.price;
+    p.gold -= (item._realPrice != null ? item._realPrice : item.price);
     room.pendingServices[playerId] = { itemId: item.id, price: item.price };
     log(room, `${p.name} bought ${item.name} (-${item.price}g) — pick a target.`);
     return { ok: true, pendingService: item.id };
@@ -1516,6 +1708,39 @@ function removePlayer(room, playerId) {
     }
   }
   return true;
+}
+
+// Jack-fairness deal rule. Limit-1 max Jacks at deal time. Swap excess to
+// bottom of draw pile, pulling non-Jacks from the top.
+function applyJackFairness(room) {
+  for (const p of room.players) {
+    if (!p || !p.hand) continue;
+    let limit = jackLimitFor(p);
+    if (room.currentFloorModifier === 'greedy') limit = 3;
+    let jacks = p.hand.filter(c => c.rank === 'J');
+    while (jacks.length >= limit) {
+      // Find a non-Jack at the top of the draw pile
+      let swapIdx = -1;
+      for (let i = room.drawPile.length - 1; i >= 0; i--) {
+        if (room.drawPile[i].rank !== 'J') { swapIdx = i; break; }
+      }
+      if (swapIdx === -1) break;
+      // Pop a Jack from hand, push to bottom of draw pile (start of array).
+      const jackOut = jacks[jacks.length - 1];
+      p.hand = p.hand.filter(c => c.id !== jackOut.id);
+      room.drawPile.unshift(jackOut);
+      // The swapIdx may have shifted by 1 now; recompute.
+      let newIdx = -1;
+      for (let i = room.drawPile.length - 1; i >= 0; i--) {
+        if (room.drawPile[i].rank !== 'J') { newIdx = i; break; }
+      }
+      if (newIdx === -1) break;
+      const swapIn = room.drawPile[newIdx];
+      room.drawPile.splice(newIdx, 1);
+      p.hand.push(swapIn);
+      jacks = p.hand.filter(c => c.rank === 'J');
+    }
+  }
 }
 
 // Jack-curse elimination — too many Jacks in hand eliminates the player from
@@ -1760,6 +1985,7 @@ module.exports = {
   RELIC_CATALOG,
   FLOOR_MODIFIERS,
   BOSS_CATALOG,
+  TREASURE_RELIC_POOL,
   SHOP_ITEMS,
   // Constructors / lifecycle
   newBetaRoom,
@@ -1774,6 +2000,9 @@ module.exports = {
   handleLiar,
   // Fork phase
   pickFork,
+  pickBossRelic,
+  rewardPick,
+  applyCleanse,
   shopBuy,
   applyService,
   cancelService,
