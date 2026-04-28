@@ -3193,6 +3193,11 @@
 
   function renderJokerRow() {
     if (!runState) return;
+    // Migrate legacy save states that started with 2 slots to the new
+    // flat-5 layout. Idempotent — does nothing if jokers is already 5+.
+    // Was previously only called on floor advance, which left Floor 1
+    // resumes stuck at 2 slots until the player advanced.
+    ensureSoloJokerSlots(runState.currentFloor || 1);
     const jokerRow = document.getElementById('betaJokerRow');
     const surveyorMarker = document.getElementById('betaSurveyorInfo');
     if (!jokerRow) return;
@@ -3207,6 +3212,27 @@
 
     // Wipe existing slot tiles and rebuild from scratch.
     Array.from(jokerRow.querySelectorAll('[id^="betaJokerSlot"]')).forEach(el => el.remove());
+    // Capacity badge ("1 / 5") so the player sees how many slots they have
+    // even when most are empty. Created once next to the "Jokers:" label.
+    let capBadge = document.getElementById('betaJokerCapBadge');
+    if (!capBadge) {
+      capBadge = document.createElement('span');
+      capBadge.id = 'betaJokerCapBadge';
+      capBadge.className = 'text-[10px] uppercase tracking-widest text-purple-200/70 ml-1 mr-1';
+      // Place it after the "Jokers:" label (the first <span> in the row)
+      // so it reads "Jokers: 1/5 [Sleight] [Empty] [Empty] ...".
+      const labelSpan = jokerRow.querySelector('span:first-of-type');
+      if (labelSpan && labelSpan.nextSibling) {
+        jokerRow.insertBefore(capBadge, labelSpan.nextSibling);
+      } else if (labelSpan) {
+        jokerRow.appendChild(capBadge);
+      } else {
+        jokerRow.insertBefore(capBadge, jokerRow.firstChild);
+      }
+    }
+    const filled = runState.jokers.filter(j => j !== null).length;
+    capBadge.textContent = filled + ' / ' + runState.jokers.length;
+
     const slots = runState.jokers.length;
     for (let i = 0; i < slots; i++) {
       const j = runState.jokers[i];
@@ -3217,32 +3243,35 @@
         // Stack indicator for stackable jokers (e.g. Sixth Sense ×2/3).
         const stk = (j.stackable && runState.jokerStacks && runState.jokerStacks[j.id])
           ? runState.jokerStacks[j.id] : 0;
-        // pe="pointer-events:none" — inline style on every child so clicks
-        // always land on the slot div itself, not the inner span/pill. This
-        // is the belt to Tailwind's pointer-events-none suspenders, in case
-        // a build pipeline strips utility classes that aren't seen elsewhere.
         const pe = ' style="pointer-events:none;"';
         const stackPill = stk > 1
           ? ' <span class="ml-1 inline-block bg-yellow-400 text-black px-1 rounded text-[10px] font-bold pointer-events-none"' + pe + '>×' + stk + '</span>'
           : '';
         div.className = 'inline-flex items-center gap-1 px-2 py-1 rounded bg-purple-900/40 cursor-pointer hover:bg-purple-800/60 transition select-none';
         div.style.cursor = 'pointer';
+        div.style.pointerEvents = 'auto'; // explicit; counters any inherited pointer-events:none
         div.title = 'Click for details — ' + j.name;
         div.setAttribute('role', 'button');
         div.setAttribute('tabindex', '0');
         div.innerHTML = '<span class="font-bold text-purple-200 pointer-events-none"' + pe + '>' +
                         escapeHtml(j.name) + '</span>' + stackPill;
-        // Per-tile listeners (capture phase + click + keyboard for accessibility).
+        // Onclick property assignment (most reliable). addEventListener can
+        // be silently broken in edge cases (CSP, double-bind across renders);
+        // .onclick is a single-slot direct binding the browser always honors.
         const idxLocal = i;
-        const handler = (e) => {
+        const handler = function (e) {
           if (e && e.preventDefault) e.preventDefault();
           if (e && e.stopPropagation) e.stopPropagation();
-          _openJokerSlotModal(idxLocal);
+          try { _openJokerSlotModal(idxLocal); }
+          catch (err) {
+            // Last-resort visible feedback so a click is never silent.
+            alert((j && j.name ? j.name : 'Joker') + ': ' + (j && j.desc ? j.desc : ''));
+          }
         };
-        div.addEventListener('click', handler);
-        div.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' || e.key === ' ') handler(e);
-        });
+        div.onclick = handler;            // primary: direct property
+        div.onkeydown = function (e) {     // keyboard fallback
+          if (e && (e.key === 'Enter' || e.key === ' ')) handler(e);
+        };
       } else {
         div.className = 'inline-flex items-center gap-1 px-2 py-1 rounded bg-black/40';
         div.innerHTML = '<span class="italic text-white/40">Empty</span>';
