@@ -148,6 +148,10 @@
 
     socket.on('beta:state', (state) => {
       lastState = state;
+      // Expose for cross-IIFE consumers (beta.js's joker catalog reads
+      // window.lugenLastMpState.mine.jokers to highlight equipped items
+      // in PvP runs, since runState only exists in solo).
+      try { window.lugenLastMpState = state; } catch (_) {}
       render();
     });
 
@@ -330,15 +334,62 @@
         badge.appendChild(b);
       }
     }
-    // Joker row (mine)
-    const jokers = s.mine && s.mine.jokers ? s.mine.jokers : [null, null];
-    for (let i = 0; i < 2; i++) {
-      const slot = document.getElementById('betaMpJokerSlot' + i);
-      if (!slot) continue;
-      const j = jokers[i];
-      slot.innerHTML = j
-        ? ('<button class="text-xs px-2 py-1 rounded bg-purple-900/60 hover:bg-purple-800 text-purple-100" title="' + escapeHtml(j.desc) + '">&#127183; ' + escapeHtml(j.name) + '</button>')
-        : '<span class="text-xs italic text-white/40">Empty</span>';
+    // Joker row (mine). Dynamic — renders one tile per slot the server
+    // sends (now flat 5). Each filled tile is clickable and pops the
+    // shared betaInfoModal with the joker's description, so a player who
+    // forgot what an equipped joker does can just click it.
+    const jokerRow = document.getElementById('betaMpJokerRow');
+    if (jokerRow) {
+      // Wipe old slot tiles and rebuild.
+      Array.from(jokerRow.querySelectorAll('[id^="betaMpJokerSlot"]')).forEach(el => el.remove());
+      const jokers = s.mine && s.mine.jokers ? s.mine.jokers.slice() : [];
+      // Defensive pad to 5 in case server hasn't migrated yet.
+      while (jokers.length < 5) jokers.push(null);
+      const filled = jokers.filter(j => !!j).length;
+      const capBadge = document.getElementById('betaMpJokerCapBadge');
+      if (capBadge) capBadge.textContent = filled + ' / ' + jokers.length;
+      // Insert position: keep slots after the cap badge but before the
+      // surveyor / tattletale buttons. Use the surveyor span as the anchor.
+      const anchor = document.getElementById('betaMpSurveyor');
+      for (let i = 0; i < jokers.length; i++) {
+        const j = jokers[i];
+        const div = document.createElement('div');
+        div.id = 'betaMpJokerSlot' + i;
+        if (j) {
+          div.className = 'inline-flex items-center gap-1 px-2 py-1 rounded bg-purple-900/40 cursor-pointer hover:bg-purple-800/60 transition select-none';
+          div.style.cursor = 'pointer';
+          div.style.pointerEvents = 'auto';
+          div.title = 'Click for details — ' + j.name;
+          div.setAttribute('role', 'button');
+          div.setAttribute('tabindex', '0');
+          // pe-style on children so clicks always land on the tile div.
+          const pe = ' style="pointer-events:none;"';
+          div.innerHTML = '<span class="font-bold text-purple-200 pointer-events-none"' + pe + '>&#127183; ' +
+                          escapeHtml(j.name) + '</span>';
+          // Direct .onclick (more reliable than addEventListener for this).
+          const localJ = j;
+          div.onclick = function (e) {
+            if (e && e.preventDefault) e.preventDefault();
+            if (e && e.stopPropagation) e.stopPropagation();
+            const subtitle = '[' + (localJ.rarity || 'Joker') + '] · slot ' + (i + 1);
+            // Reuse the shared modal exposed by beta.js. Plain-alert
+            // fallback if it isn't loaded for any reason.
+            if (typeof window.lugenShowInfoModal === 'function') {
+              window.lugenShowInfoModal(localJ.name, subtitle, localJ.desc || '(no description)');
+            } else {
+              alert(localJ.name + '\n' + subtitle + '\n\n' + (localJ.desc || ''));
+            }
+          };
+          div.onkeydown = function (e) {
+            if (e && (e.key === 'Enter' || e.key === ' ')) div.onclick(e);
+          };
+        } else {
+          div.className = 'inline-flex items-center gap-1 px-2 py-1 rounded bg-black/40';
+          div.innerHTML = '<span class="italic text-white/40">Empty</span>';
+        }
+        if (anchor) jokerRow.insertBefore(div, anchor);
+        else        jokerRow.appendChild(div);
+      }
     }
     // Surveyor display
     const surv = document.getElementById('betaMpSurveyor');
@@ -510,7 +561,7 @@
       (offer.nextFloorIsBoss && offer.nextBoss
         ? '<p class="text-rose-300 mb-3">&#128081; Boss next: ' + escapeHtml(offer.nextBoss.name) + ' — ' + escapeHtml(offer.nextBoss.desc) + '</p>'
         : '') +
-      '<p class="text-emerald-200 mb-3">Pick one fork. Each player chooses independently.</p>';
+      '<p class="text-emerald-200 mb-3">A single fork is offered this floor (seeded). Take it or skip straight to the next floor.</p>';
 
     if (!isResolved && !isShopBrowsing && myPick !== 'reward-browsing' && myPick !== 'cleanse-browsing') {
       html += '<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">';
@@ -578,14 +629,16 @@
     }
 
     // Continue button:
-    //   - not shopping → standard "Continue to Floor N" once a fork is picked
-    //   - shopping     → "Done shopping — continue" so the player can leave
-    //     the shop without backing out via a different path. Earlier this
-    //     button was hidden during shop-browsing, leaving players stuck.
-    if (myPick && myPick !== 'shop-browsing') {
-      html += '<button id="betaMpContinueForkBtn" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold">Continue to Floor ' + offer.nextFloor + '</button>';
+    //   - no pick yet  → "Skip & continue to Floor N" (the offered fork is
+    //     just one option; you can pass on it).
+    //   - shop-browsing→ "Done shopping — continue".
+    //   - resolved     → standard "Continue to Floor N".
+    if (!myPick) {
+      html += '<button id="betaMpContinueForkBtn" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold">Skip &amp; continue to Floor ' + offer.nextFloor + '</button>';
     } else if (myPick === 'shop-browsing') {
       html += '<button id="betaMpContinueForkBtn" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold">Done shopping — continue to Floor ' + offer.nextFloor + '</button>';
+    } else {
+      html += '<button id="betaMpContinueForkBtn" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold">Continue to Floor ' + offer.nextFloor + '</button>';
     }
     // Show waiting status
     const ready = Object.values(s.forkPicks || {}).filter(v => v === 'continue').length;

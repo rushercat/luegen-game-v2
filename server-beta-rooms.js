@@ -156,6 +156,32 @@ const SPIKED_TRAP_DRAWS = 3;
 const TATTLETALE_PEEK_MS = 4000;
 const TREASURE_CHANCE_ACT_III = 0.33;
 
+// ---------- Seeded PRNG for fork variation ----------
+// Mirrors the client (beta.js) so server picks line up with what a shared
+// seed would imply. Deterministic per (run seed, floor).
+function _seedToInt(seed) {
+  let h = 2166136261 >>> 0; // FNV-1a
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h || 1;
+}
+function _seededRng(seedInt) {
+  let a = seedInt >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function floorRng(seed, floor) {
+  const intSeed = _seedToInt((seed || 'NOSEED') + ':floor:' + (floor | 0));
+  return _seededRng(intSeed);
+}
+
 const SHOP_RARITY_WEIGHTS = { Common: 60, Uncommon: 25, Rare: 10, Legendary: 5 };
 const SHOP_OFFER_CONSUMABLES = 3;
 const SHOP_OFFER_JOKERS = 3;
@@ -1541,27 +1567,41 @@ function pickBossRelic(room, playerId, relicId) {
 }
 
 // ---------- Fork phase ----------
+// Per-floor fork = exactly ONE offering, seeded by run seed + next floor.
+// The player can either take the offered fork or skip (Continue) straight
+// to the next floor. Pool: {Shop, Reward, Event, Cleanse, Treasure}, with
+// Treasure only available on Act III non-boss floors. Deterministic so
+// the same seed produces the same fork sequence every replay.
 function enterForkPhase(room) {
   room.phase = 'fork';
   room.forkPicks = {};
-  // Decide if a Treasure node replaces Reward this floor (Act III non-boss only)
   const nextFloor = room.currentFloor + 1;
   const isAct3 = nextFloor >= 7 && nextFloor <= 9;
   const willBeBoss = isBossFloor(nextFloor);
-  const forkOffersTreasure = isAct3 && !willBeBoss && Math.random() < TREASURE_CHANCE_ACT_III;
+
+  const rng = floorRng(room.seed || 'NOSEED', nextFloor);
+  const pool = ['shop', 'reward', 'event', 'cleanse'];
+  if (isAct3 && !willBeBoss && rng() < TREASURE_CHANCE_ACT_III) {
+    pool.push('treasure');
+  }
+  // Pick exactly ONE option deterministically.
+  const idx = Math.floor(rng() * pool.length);
+  const pick = pool[idx];
+
   room.forkOffer = {
     nextFloor,
     nextFloorIsBoss: willBeBoss,
     nextBoss: willBeBoss ? getBoss(nextFloor) : null,
-    hasShop: true,
-    hasReward: !forkOffersTreasure,
-    hasEvent: true,
-    hasTreasure: forkOffersTreasure,
-    hasCleanse: true,
+    hasShop:     pick === 'shop',
+    hasReward:   pick === 'reward',
+    hasEvent:    pick === 'event',
+    hasCleanse:  pick === 'cleanse',
+    hasTreasure: pick === 'treasure',
   };
-  // Generate a new shop offer for this fork
+  // Always regenerate the shop offer in case the pick is shop. Cheap.
   regenerateShopOffer(room);
-  log(room, `Fork: pick Shop, Reward${forkOffersTreasure ? '/Treasure' : ''}, or Event before Floor ${nextFloor}.`);
+  const label = pick.charAt(0).toUpperCase() + pick.slice(1);
+  log(room, `Fork: ${label} appears before Floor ${nextFloor}. Take it or skip.`);
 }
 
 function maybeAdvanceFromFork(room) {

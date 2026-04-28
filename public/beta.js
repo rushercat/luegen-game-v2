@@ -7156,7 +7156,16 @@
     body.innerHTML = '';
     if (kind === 'jokers') {
       titleEl.textContent = '\ud83c\udca0 Jokers';
-      const equipped = (runState && runState.jokers) ? runState.jokers.filter(j => j).map(j => j.id) : [];
+      // Catalog reads runState.jokers for solo. In MP there's no runState
+      // here — the MP client tracks state on window.lugenLastMpState (set
+      // by beta-mp.js). Fall through to that when solo state is empty.
+      let equipped = (runState && runState.jokers) ? runState.jokers.filter(j => j).map(j => j.id) : [];
+      if (equipped.length === 0 &&
+          typeof window.lugenLastMpState === 'object' &&
+          window.lugenLastMpState && window.lugenLastMpState.mine) {
+        const mpJokers = window.lugenLastMpState.mine.jokers || [];
+        equipped = mpJokers.filter(j => j).map(j => j.id);
+      }
       subEl.textContent = 'Every joker in the game. ' + (equipped.length ? equipped.length + ' currently equipped — highlighted.' : '(none equipped right now)');
       // Group by rarity for readability.
       const ORDER = ['Common', 'Uncommon', 'Rare', 'Legendary'];
@@ -7403,6 +7412,10 @@
     // Debug helper: open the info modal for joker slot N (0-indexed). Useful
     // if the in-game click fails for any reason — call lugenInspectJoker(0).
     window.lugenInspectJoker = (idx) => _openJokerSlotModal(idx | 0);
+    // Shared info modal — exposed so beta-mp.js (a separate IIFE) can
+    // reuse the existing #betaInfoModal infrastructure for joker tooltips
+    // in PvP, instead of falling back to a plain alert().
+    window.lugenShowInfoModal = showInfoModal;
     window.lugenToggleWhisper = () => {
       if (!runState || !runState.character || !runState.character.whisperPeek) {
         console.log('[Whisper] Active character is not The Whisper.');
