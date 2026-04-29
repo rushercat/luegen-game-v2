@@ -5,6 +5,88 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Lügen — Multiplayer Card Game</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lügen design-system theme extension (Phase 1: in-round table). Extends Tailwind
+       with the design tokens used by the new beta-game layout. Generic Tailwind
+       classes elsewhere in this file (bg-emerald-900, etc.) keep working. -->
+  <script id="tailwind-design-tokens">
+    if (window.tailwind && tailwind.config) {
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              "background": "#081425",
+              "on-primary-fixed-variant": "#5a4300",
+              "inverse-on-surface": "#263143",
+              "on-surface": "#d8e3fb",
+              "secondary-container": "#005829",
+              "primary-container": "#eab308",
+              "on-primary-container": "#604700",
+              "surface-variant": "#2a3548",
+              "surface-container-high": "#1f2a3c",
+              "error-container": "#93000a",
+              "surface": "#081425",
+              "surface-container-lowest": "#040e1f",
+              "on-tertiary": "#00344c",
+              "surface-tint": "#f7be1d",
+              "on-primary": "#3f2e00",
+              "on-background": "#d8e3fb",
+              "secondary-fixed-dim": "#8bd79b",
+              "on-error-container": "#ffdad6",
+              "surface-dim": "#081425",
+              "inverse-primary": "#785a00",
+              "tertiary-container": "#60c5ff",
+              "inverse-surface": "#d8e3fb",
+              "tertiary-fixed": "#c7e7ff",
+              "on-surface-variant": "#d3c5ac",
+              "on-secondary-fixed-variant": "#005226",
+              "secondary-fixed": "#a6f4b5",
+              "surface-bright": "#2f3a4c",
+              "surface-container-highest": "#2a3548",
+              "primary": "#ffd165",
+              "outline-variant": "#4f4633",
+              "on-secondary": "#003918",
+              "on-error": "#690005",
+              "error": "#ffb4ab",
+              "on-tertiary-container": "#005072",
+              "tertiary": "#adddff",
+              "primary-fixed": "#ffdf9a",
+              "on-primary-fixed": "#251a00",
+              "on-secondary-fixed": "#00210b",
+              "surface-container": "#152031",
+              "primary-fixed-dim": "#f7be1d",
+              "on-secondary-container": "#81cc90",
+              "surface-container-low": "#111c2d",
+              "outline": "#9b8f79",
+              "secondary": "#8bd79b"
+            },
+            spacing: {
+              "card-lift": "14px",
+              "ring-weight": "2px",
+              "ring-weight-active": "3px",
+              "container-padding": "1.25rem",
+              "card-width": "64px",
+              "card-height": "90px",
+              "panel-gap": "1rem"
+            },
+            fontFamily: {
+              "pressure-rank": ["Space Grotesk"],
+              "body-standard": ["Inter"],
+              "eyebrow-label": ["Inter"],
+              "button-text": ["Space Grotesk"]
+            },
+            fontSize: {
+              "pressure-rank": ["24px", { "lineHeight": "1", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+              "body-standard": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+              "eyebrow-label": ["10px", { "lineHeight": "12px", "letterSpacing": "0.16em", "fontWeight": "700" }],
+              "button-text": ["14px", { "lineHeight": "1", "fontWeight": "700" }]
+            }
+          }
+        }
+      };
+    }
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&amp;family=Space+Grotesk:wght@400;500;700;900&amp;display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
   <script src="/socket.io/socket.io.js"></script>
   <!-- Supabase JS (only used when Google sign-in is configured server-side) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -40,6 +122,44 @@
     .card-rainbow.selected { transform: translateY(-14px); }
     .scrollbar-thin::-webkit-scrollbar { width: 6px; }
     .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px; }
+    /* === Phase 1: Lügen design-system utilities === */
+    .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+    .icon-fill { font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+    .emerald-felt {
+      background-color: #004d23;
+      background-image: radial-gradient(circle at center, rgba(0,0,0,0) 0%, rgba(0,0,0,0.6) 100%);
+    }
+    .slate-glass {
+      background-color: rgba(30, 41, 59, 0.7);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(155, 143, 121, 0.3);
+    }
+    /* Card-back diagonal stripe pattern (used by central pile's decorative cards). */
+    .bg-stripes {
+      background-color: #1e3a8a;
+      background-image: repeating-linear-gradient(45deg, rgba(255,255,255,0.18) 0, rgba(255,255,255,0.18) 2px, transparent 2px, transparent 6px);
+    }
+    /* Mask-based icons that take their color from currentColor.
+       Source PNGs are transparent-background silhouettes in /assets/. */
+    .icon-mask {
+      display: inline-block;
+      background-color: currentColor;
+      mask-position: center;
+      mask-repeat: no-repeat;
+      mask-size: contain;
+      -webkit-mask-position: center;
+      -webkit-mask-repeat: no-repeat;
+      -webkit-mask-size: contain;
+    }
+    .icon-mask--jokers {
+      mask-image: url('/assets/icon-jokers.png');
+      -webkit-mask-image: url('/assets/icon-jokers.png');
+    }
+    .icon-mask--consumables {
+      mask-image: url('/assets/icon-consumables.png');
+      -webkit-mask-image: url('/assets/icon-consumables.png');
+    }
   </style>
 </head>
 <body class="bg-gradient-to-br from-emerald-900 via-green-800 to-emerald-950 min-h-screen text-white">
@@ -337,79 +457,220 @@
   </div>
 
   <div id="betaGame" class="hidden">
-    <div id="betaStatusBar" class="flex flex-wrap justify-between items-center gap-3 bg-black/40 px-4 py-2 rounded-lg mb-4 text-sm">
-      <div class="flex items-center gap-3">
+    <!-- ===== In-round Top App Bar (Phase 3 condensed into Phase 1) ===== -->
+    <header class="flex justify-between items-center px-6 h-14 bg-slate-900/80 backdrop-blur-md border border-slate-700/50 rounded-lg mb-3 font-['Space_Grotesk'] tracking-tight">
+      <!-- Brand chrome: jester mask + wordmark use violet so they tie into
+           the jester logo art. Yellow ("Lügen Yellow") stays reserved for
+           in-game authority signals (active turn, primary CTAs, selected cards). -->
+      <div class="flex items-center gap-2 group" title="Jacks Gambit">
+        <span class="icon-mask icon-mask--jokers w-7 h-7 text-purple-400 group-hover:text-purple-300 transition-colors shrink-0" aria-hidden="true"></span>
+        <span class="text-xl font-black text-purple-400 group-hover:text-purple-300 uppercase tracking-widest italic transition-colors">Jacks Gambit</span>
+      </div>
+      <nav class="hidden md:flex gap-8 h-full">
+        <a class="beta-topnav flex items-center h-full text-purple-400 border-b-2 border-purple-400 font-bold cursor-default" data-topnav="table">Table</a>
+        <a class="beta-topnav flex items-center h-full text-slate-400 font-medium hover:text-purple-300 transition-colors cursor-pointer" data-topnav="legend">Legend</a>
+        <a class="beta-topnav flex items-center h-full text-slate-400 font-medium hover:text-purple-300 transition-colors cursor-pointer" data-topnav="achievements" data-trigger="betaCatalogAchievementsBtn">Achievements</a>
+        <a class="beta-topnav flex items-center h-full text-slate-400 font-medium hover:text-purple-300 transition-colors cursor-pointer" data-topnav="cards" data-trigger="betaDeckInspectorBtn">Cards</a>
+      </nav>
+      <div class="flex items-center gap-2">
+        <span class="material-symbols-outlined text-slate-400">settings</span>
+      </div>
+    </header>
+
+    <!-- ===== Status strip (compact: floor / gold / inventory / score / hearts) ===== -->
+    <div id="betaStatusBar" class="flex flex-wrap justify-between items-center gap-3 bg-slate-900/70 backdrop-blur-md border border-slate-700/50 px-4 py-2 rounded-lg mb-3 text-sm">
+      <div class="flex items-center gap-4 flex-wrap">
         <span>Floor <span id="betaFloor" class="font-bold text-yellow-300">1</span>/9</span>
         <span id="betaFloorModBadge"></span>
         <span class="text-yellow-300">&#128176; <span id="betaGold" class="font-bold">0</span>g</span>
         <span class="text-emerald-300 text-xs">&#128230; <span id="betaInventoryCount" class="font-bold">0</span></span>
-        <button id="betaDeckInspectorBtn" title="Inspect every card in the game (and its affix)" class="bg-purple-700 hover:bg-purple-600 transition px-2 py-0.5 rounded text-xs font-bold">&#127183; Cards</button>
-        <button id="betaCatalogJokersBtn"      title="See every joker in the game"       class="bg-fuchsia-700 hover:bg-fuchsia-600 transition px-2 py-0.5 rounded text-xs font-bold">&#127183; Jokers</button>
-        <button id="betaCatalogRelicsBtn"      title="See every relic in the game"       class="bg-amber-700 hover:bg-amber-600 transition px-2 py-0.5 rounded text-xs font-bold">&#128081; Relics</button>
-        <button id="betaCatalogAffixesBtn"     title="See every affix and what it does"  class="bg-cyan-700 hover:bg-cyan-600 transition px-2 py-0.5 rounded text-xs font-bold">&#10024; Affixes</button>
-        <button id="betaCatalogConsumablesBtn" title="See every consumable in the game"  class="bg-emerald-700 hover:bg-emerald-600 transition px-2 py-0.5 rounded text-xs font-bold">&#127881; Consumables</button>
-        <button id="betaCatalogAchievementsBtn" title="See your achievements + progress" class="bg-yellow-700 hover:bg-yellow-600 transition px-2 py-0.5 rounded text-xs font-bold">&#127942; Achievements</button>
       </div>
       <div id="betaRoundScore" class="text-xs sm:text-sm">Round score: &mdash;</div>
       <div id="betaHearts" class="text-red-400 text-lg tracking-wider">&hearts;&hearts;&hearts;</div>
     </div>
 
-    <div id="betaJokerRow" class="flex flex-wrap items-center justify-center gap-2 bg-black/30 px-3 py-1.5 rounded-lg mb-4 text-xs">
-      <span class="text-purple-300 font-bold mr-1">Jokers:</span>
-      <div id="betaJokerSlot0" class="inline-flex items-center gap-1 px-2 py-1 rounded bg-black/40"><span class="italic text-white/40">Empty</span></div>
-      <div id="betaJokerSlot1" class="inline-flex items-center gap-1 px-2 py-1 rounded bg-black/40"><span class="italic text-white/40">Empty</span></div>
-      <span id="betaSurveyorInfo" class="hidden ml-2 px-2 py-1 rounded bg-cyan-900/40 text-cyan-200">&#128270; Top: <b id="betaSurveyorCard">?</b></span>
-      <button id="betaTattletaleBtn" class="hidden ml-2 px-3 py-1 rounded bg-purple-700 hover:bg-purple-600 transition font-bold">&#128064; Peek (<span id="betaTattletaleCharges">0</span>)</button>
+    <!-- Hidden catalog triggers — beta.js still binds handlers to these IDs.
+         They are invisible in the new UI; the top nav clicks them programmatically. -->
+    <div id="betaCatalogTriggerHost" class="hidden">
+      <button id="betaDeckInspectorBtn" title="Inspect every card in the game (and its affix)">Cards</button>
+      <button id="betaCatalogJokersBtn" title="See every joker in the game">Jokers</button>
+      <button id="betaCatalogRelicsBtn" title="See every relic in the game">Relics</button>
+      <button id="betaCatalogAffixesBtn" title="See every affix and what it does">Affixes</button>
+      <button id="betaCatalogConsumablesBtn" title="See every consumable in the game">Consumables</button>
+      <button id="betaCatalogAchievementsBtn" title="See your achievements + progress">Achievements</button>
+      <button id="betaCatalogBossesBtn" title="See every boss in the game">Bosses</button>
+      <button id="betaCatalogFloorModsBtn" title="See every floor modifier">Floor Modifiers</button>
+      <button id="betaCatalogBotsBtn"   title="See every bot personality">Bots</button>
     </div>
 
-    <div id="betaConsumablesRow" class="flex flex-wrap items-center justify-center gap-2 bg-black/30 px-3 py-1.5 rounded-lg mb-4 text-xs">
-      <span class="text-amber-300 font-bold mr-1">Consumables:</span>
-      <div id="betaConsumablesList" class="flex flex-wrap gap-2 items-center"></div>
-    </div>
-
-    <div id="betaOpponents" class="flex flex-wrap gap-3 justify-center mb-6"></div>
-
-    <div class="bg-black/30 rounded-2xl p-6 text-center border border-white/10 mb-4">
-      <div class="text-xs uppercase tracking-widest text-yellow-300">Target rank</div>
-      <div id="betaTarget" class="text-7xl font-extrabold my-2">&mdash;</div>
-      <div class="text-sm text-emerald-200">Pile: <span id="betaPileSize" class="font-bold">0</span> cards &middot; Draw pile: <span id="betaDrawSize" class="font-bold">0</span></div>
-      <div id="betaLastPlay" class="mt-2 text-yellow-200 text-sm min-h-[1.25rem]"></div>
-      <div id="betaReveal" class="mt-4 flex flex-wrap justify-center gap-2 min-h-[100px]"></div>
-    </div>
-
-    <div class="text-center mb-4">
-      <span id="betaTurnIndicator" class="inline-block bg-yellow-500 text-black px-5 py-2 rounded-full font-bold"></span>
-      <div id="betaChallengeBar" class="hidden mt-2 max-w-xs mx-auto">
-        <div class="h-2 bg-white/10 rounded-full overflow-hidden">
-          <div id="betaChallengeBarFill" class="h-full bg-red-500 transition-all" style="width:100%"></div>
+    <!-- Legend hub modal (the only piece of new UI introduced for the top nav).
+         When the player clicks "Legend" in the top app bar, this overlay opens
+         and offers Jokers / Affixes / Relics / Consumables; each tile fires
+         the matching betaCatalog* button so the existing modal opens. -->
+    <div id="betaLegendHub" class="hidden fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6">
+      <div class="bg-surface-container border border-outline-variant rounded-xl max-w-3xl w-full p-6 relative shadow-2xl">
+        <button id="betaLegendHubClose" aria-label="Close" class="absolute top-3 right-3 text-slate-400 hover:text-yellow-400 transition-colors p-2">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+        <div class="text-center mb-6">
+          <h2 class="text-3xl font-pressure-rank text-purple-400 mb-1">THE LEGEND</h2>
+          <p class="text-sm text-on-surface-variant">Pick a compendium.</p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <button data-trigger="betaCatalogJokersBtn" class="group bg-surface-container-high hover:border-primary/50 border border-outline-variant rounded-lg p-4 text-left flex items-center gap-3 transition-colors">
+            <span class="icon-mask icon-mask--jokers w-9 h-9 text-purple-400 shrink-0"></span>
+            <div>
+              <div class="font-button-text text-button-text text-on-surface group-hover:text-primary transition-colors">Jokers</div>
+              <div class="text-xs text-on-surface-variant">Wildcards and synergies.</div>
+            </div>
+          </button>
+          <button data-trigger="betaCatalogAffixesBtn" class="group bg-surface-container-high hover:border-primary/50 border border-outline-variant rounded-lg p-4 text-left flex items-center gap-3 transition-colors">
+            <span class="material-symbols-outlined text-purple-400 text-3xl">stars</span>
+            <div>
+              <div class="font-button-text text-button-text text-on-surface group-hover:text-primary transition-colors">Affixes</div>
+              <div class="text-xs text-on-surface-variant">Modifiers bonded to cards.</div>
+            </div>
+          </button>
+          <button data-trigger="betaCatalogRelicsBtn" class="group bg-surface-container-high hover:border-primary/50 border border-outline-variant rounded-lg p-4 text-left flex items-center gap-3 transition-colors">
+            <span class="material-symbols-outlined text-purple-400 text-3xl">diamond</span>
+            <div>
+              <div class="font-button-text text-button-text text-on-surface group-hover:text-primary transition-colors">Relics</div>
+              <div class="text-xs text-on-surface-variant">Run-long passive effects.</div>
+            </div>
+          </button>
+          <button data-trigger="betaCatalogConsumablesBtn" class="group bg-surface-container-high hover:border-primary/50 border border-outline-variant rounded-lg p-4 text-left flex items-center gap-3 transition-colors">
+            <span class="icon-mask icon-mask--consumables w-9 h-9 text-purple-400 shrink-0"></span>
+            <div>
+              <div class="font-button-text text-button-text text-on-surface group-hover:text-primary transition-colors">Consumables</div>
+              <div class="text-xs text-on-surface-variant">Single-use items.</div>
+            </div>
+          </button>
+          <button data-trigger="betaCatalogBossesBtn" class="group bg-surface-container-high hover:border-primary/50 border border-outline-variant rounded-lg p-4 text-left flex items-center gap-3 transition-colors">
+            <span class="material-symbols-outlined text-purple-400 text-3xl shrink-0">skull</span>
+            <div>
+              <div class="font-button-text text-button-text text-on-surface group-hover:text-primary transition-colors">Bosses</div>
+              <div class="text-xs text-on-surface-variant">Floor 3, 6, 9 confrontations.</div>
+            </div>
+          </button>
+          <button data-trigger="betaCatalogFloorModsBtn" class="group bg-surface-container-high hover:border-primary/50 border border-outline-variant rounded-lg p-4 text-left flex items-center gap-3 transition-colors">
+            <span class="material-symbols-outlined text-purple-400 text-3xl shrink-0">filter_drama</span>
+            <div>
+              <div class="font-button-text text-button-text text-on-surface group-hover:text-primary transition-colors">Floor Modifiers</div>
+              <div class="text-xs text-on-surface-variant">Per-floor rule changes.</div>
+            </div>
+          </button>
+          <button data-trigger="betaCatalogBotsBtn" class="group bg-surface-container-high hover:border-primary/50 border border-outline-variant rounded-lg p-4 text-left flex items-center gap-3 transition-colors">
+            <span class="material-symbols-outlined text-purple-400 text-3xl shrink-0">smart_toy</span>
+            <div>
+              <div class="font-button-text text-button-text text-on-surface group-hover:text-primary transition-colors">Bots</div>
+              <div class="text-xs text-on-surface-variant">Opponent personalities and tells.</div>
+            </div>
+          </button>
         </div>
       </div>
     </div>
 
-    <div class="mt-6">
-      <div class="text-sm text-emerald-200 mb-2 text-center">Your hand (<span id="betaHandCount">0</span>) &mdash; click to select up to 3</div>
-      <div id="betaHand" class="flex flex-wrap gap-2 justify-center"></div>
+    <!-- The Table — emerald felt arena that hosts the new layout. -->
+    <div class="emerald-felt rounded-xl p-6 relative isolate">
+      <!-- TOP: Opponent tiles (filled by beta.js) -->
+      <section class="mb-6">
+        <div id="betaOpponents" class="flex flex-wrap gap-3 justify-center"></div>
+      </section>
+
+      <!-- MIDDLE 3-column: Jokers panel | Pile/Target/Turn | Consumables panel -->
+      <section class="grid grid-cols-1 md:grid-cols-12 gap-panel-gap items-stretch">
+        <!-- LEFT: Jokers (top) + Relics (bottom) -->
+        <aside class="md:col-span-3 flex flex-col gap-4">
+          <div class="flex flex-col gap-2">
+            <div class="font-eyebrow-label text-eyebrow-label text-on-surface-variant uppercase tracking-widest text-center">Jokers</div>
+            <!-- #betaJokerRow stays the container beta.js writes into. The slot tiles
+                 and #betaJokerCapBadge are created/torn down by beta.js itself. -->
+            <div id="betaJokerRow" class="slate-glass rounded-xl p-3 flex flex-col gap-2 min-h-[180px] text-xs">
+              <span class="text-purple-300 font-bold">Jokers:</span>
+              <span id="betaSurveyorInfo" class="hidden px-2 py-1 rounded bg-cyan-900/40 text-cyan-200">&#128270; Top: <b id="betaSurveyorCard">?</b></span>
+              <button id="betaTattletaleBtn" class="hidden px-3 py-1 rounded bg-purple-700 hover:bg-purple-600 transition font-bold">&#128064; Peek (<span id="betaTattletaleCharges">0</span>)</button>
+            </div>
+          </div>
+          <div class="flex flex-col gap-2">
+            <div class="font-eyebrow-label text-eyebrow-label text-on-surface-variant uppercase tracking-widest text-center">Relics</div>
+            <!-- #betaRelicsList: populated by renderRelicsRow() in beta.js. -->
+            <div id="betaRelicsRow" class="slate-glass rounded-xl p-3 min-h-[120px] text-xs">
+              <span class="text-amber-300 font-bold mb-1 block">Relics:</span>
+              <div id="betaRelicsList" class="flex flex-col gap-1.5"></div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- CENTER: Turn pill, challenge bar, target rank panel, last-play, reveal -->
+        <div class="md:col-span-6 flex flex-col items-center justify-start gap-3 relative">
+          <span id="betaTurnIndicator" class="inline-block bg-primary-container text-on-primary-container px-6 py-1.5 rounded-full font-button-text text-button-text uppercase tracking-wider shadow-lg"></span>
+
+          <div id="betaChallengeBar" class="hidden w-48">
+            <div class="h-2 bg-surface-container-high rounded-full overflow-hidden border border-outline-variant/30">
+              <div id="betaChallengeBarFill" class="h-full bg-error transition-all" style="width:100%"></div>
+            </div>
+          </div>
+
+          <div class="bg-black/30 rounded-2xl p-6 text-center border border-white/10 w-full max-w-md mt-2">
+            <div class="text-xs uppercase tracking-widest text-yellow-300">Target rank</div>
+            <div id="betaTarget" class="text-7xl font-extrabold my-2">&mdash;</div>
+            <div class="text-sm text-emerald-200">Pile: <span id="betaPileSize" class="font-bold">0</span> cards &middot; Draw pile: <span id="betaDrawSize" class="font-bold">0</span></div>
+            <div id="betaLastPlay" class="mt-2 text-yellow-200 text-sm min-h-[1.25rem]"></div>
+            <div id="betaReveal" class="mt-4 flex flex-wrap justify-center gap-2 min-h-[100px]"></div>
+          </div>
+        </div>
+
+        <!-- RIGHT: Consumables -->
+        <aside class="md:col-span-3 flex flex-col gap-2">
+          <div class="font-eyebrow-label text-eyebrow-label text-on-surface-variant uppercase tracking-widest text-center">Consumables</div>
+          <!-- #betaConsumablesRow / #betaConsumablesList preserved -->
+          <div id="betaConsumablesRow" class="slate-glass rounded-xl p-3 min-h-[180px] text-xs">
+            <span class="text-amber-300 font-bold mb-1 block">Consumables:</span>
+            <div id="betaConsumablesList" class="flex flex-wrap gap-2 items-center"></div>
+          </div>
+        </aside>
+      </section>
+
+      <!-- BOTTOM: Hand + Actions -->
+      <section class="mt-6 flex flex-col items-center gap-4">
+        <div class="text-sm text-emerald-200 text-center">Your hand (<span id="betaHandCount">0</span>) &mdash; click to select up to 3</div>
+        <div id="betaHand" class="flex flex-wrap gap-2 justify-center"></div>
+
+        <!-- Big primary actions (LIAR / Pass / Play). These three share the wider
+             area; the smaller utility buttons wrap below. -->
+        <div class="flex flex-wrap gap-3 justify-center items-stretch w-full max-w-3xl mt-2">
+          <button id="betaLiarBtn" class="hidden flex-1 min-w-[160px] bg-error-container text-on-error-container border border-error/20 hover:brightness-110 active:scale-95 transition-all px-6 py-4 rounded-lg font-button-text text-button-text shadow-lg flex items-center justify-center gap-2">
+            <span class="material-symbols-outlined text-[20px]">warning</span>LIAR!
+          </button>
+          <button id="betaPassBtn" class="hidden flex-1 min-w-[160px] bg-secondary text-on-secondary border border-secondary-fixed/20 hover:brightness-110 active:scale-95 transition-all px-6 py-4 rounded-lg font-button-text text-button-text shadow-lg flex items-center justify-center gap-2">
+            <span class="material-symbols-outlined text-[20px]">check</span>Pass &amp; Play
+          </button>
+          <button id="betaPlayBtn" class="hidden flex-1 min-w-[160px] bg-blue-600 hover:bg-blue-700 transition px-6 py-4 rounded-lg font-button-text text-button-text shadow-lg disabled:opacity-40 disabled:cursor-not-allowed">
+            Play Selected
+          </button>
+        </div>
+
+        <!-- Utility / consumable / boss buttons. beta.js shows/hides each via .hidden. -->
+        <div class="flex flex-wrap gap-2 justify-center items-center w-full max-w-3xl">
+          <button id="betaUseSmokeBtn" class="hidden bg-gray-600 hover:bg-gray-500 transition px-4 py-2 rounded-lg font-bold text-sm" title="Skip your turn">&#128684; Smoke Bomb (<span id="betaSmokeCount">0</span>)</button>
+          <button id="betaUseCounterfeitBtn" class="hidden bg-purple-700 hover:bg-purple-600 transition px-4 py-2 rounded-lg font-bold text-sm" title="Change the target rank for the rest of the round">&#127922; Counterfeit (<span id="betaCounterfeitCount">0</span>)</button>
+          <button id="betaUseJackBtn" class="hidden bg-amber-700 hover:bg-amber-600 transition px-4 py-2 rounded-lg font-bold text-sm" title="Discard up to 2 Jacks from your hand">&#129355; Jack-be-Nimble (<span id="betaJackBtnCount">0</span>)</button>
+          <button id="betaDoubletalkBtn" class="hidden bg-rose-700 hover:bg-rose-600 transition px-4 py-2 rounded-lg font-bold text-sm" title="Doubletalk: play 2-4 cards this turn (once per round)">&#128481; Doubletalk</button>
+          <button id="betaSleightBtn" class="hidden bg-blue-700 hover:bg-blue-600 transition px-4 py-2 rounded-lg font-bold text-sm" title="Sleight of Hand: draw 1 card from the draw pile (once per round)">&#129380; Sleight</button>
+          <button id="betaLoadedDieBtn" class="hidden bg-yellow-700 hover:bg-yellow-600 transition px-4 py-2 rounded-lg font-bold text-sm" title="Loaded Die relic: reroll the target rank (once per floor)">&#127922; Loaded Die</button>
+        </div>
+
+        <!-- Counterfeit picker (preserved) -->
+        <div id="betaCounterfeitPicker" class="hidden mt-3 bg-black/40 p-3 rounded-lg max-w-md mx-auto w-full">
+          <div class="text-sm text-emerald-200 text-center mb-2">Pick a new target rank:</div>
+          <div id="betaCounterfeitButtons" class="flex flex-wrap gap-2 justify-center mb-2"></div>
+          <div class="text-center"><button id="betaCounterfeitCancelBtn" class="bg-white/10 hover:bg-white/20 transition px-4 py-1 rounded-lg text-sm">Cancel</button></div>
+        </div>
+      </section>
     </div>
 
-    <div class="mt-5 flex flex-wrap gap-2 justify-center items-center">
-      <button id="betaPlayBtn" class="hidden bg-blue-600 hover:bg-blue-700 transition px-6 py-2 rounded-lg font-bold disabled:opacity-40 disabled:cursor-not-allowed">Play Selected</button>
-      <button id="betaLiarBtn" class="hidden bg-red-600 hover:bg-red-700 transition px-6 py-2 rounded-lg font-bold">&#128680; LIAR!</button>
-      <button id="betaPassBtn" class="hidden bg-white/10 hover:bg-white/20 transition px-6 py-2 rounded-lg font-bold">Pass &amp; play</button>
-      <button id="betaUseSmokeBtn" class="hidden bg-gray-600 hover:bg-gray-500 transition px-4 py-2 rounded-lg font-bold text-sm" title="Skip your turn">&#128684; Smoke Bomb (<span id="betaSmokeCount">0</span>)</button>
-      <button id="betaUseCounterfeitBtn" class="hidden bg-purple-700 hover:bg-purple-600 transition px-4 py-2 rounded-lg font-bold text-sm" title="Change the target rank for the rest of the round">&#127922; Counterfeit (<span id="betaCounterfeitCount">0</span>)</button>
-      <button id="betaUseJackBtn" class="hidden bg-amber-700 hover:bg-amber-600 transition px-4 py-2 rounded-lg font-bold text-sm" title="Discard up to 2 Jacks from your hand">&#129355; Jack-be-Nimble (<span id="betaJackBtnCount">0</span>)</button>
-      <button id="betaDoubletalkBtn" class="hidden bg-rose-700 hover:bg-rose-600 transition px-4 py-2 rounded-lg font-bold text-sm" title="Doubletalk: play 2-4 cards this turn (once per round)">&#128481; Doubletalk</button>
-      <button id="betaSleightBtn" class="hidden bg-blue-700 hover:bg-blue-600 transition px-4 py-2 rounded-lg font-bold text-sm" title="Sleight of Hand: draw 1 card from the draw pile (once per round)">&#129380; Sleight</button>
-      <button id="betaLoadedDieBtn" class="hidden bg-yellow-700 hover:bg-yellow-600 transition px-4 py-2 rounded-lg font-bold text-sm" title="Loaded Die relic: reroll the target rank (once per floor)">&#127922; Loaded Die</button>
-    </div>
-
-    <div id="betaCounterfeitPicker" class="hidden mt-3 bg-black/40 p-3 rounded-lg max-w-md mx-auto">
-      <div class="text-sm text-emerald-200 text-center mb-2">Pick a new target rank:</div>
-      <div id="betaCounterfeitButtons" class="flex flex-wrap gap-2 justify-center mb-2"></div>
-      <div class="text-center"><button id="betaCounterfeitCancelBtn" class="bg-white/10 hover:bg-white/20 transition px-4 py-1 rounded-lg text-sm">Cancel</button></div>
-    </div>
-
-    <div class="mt-6 bg-black/40 p-4 rounded-xl">
+    <!-- Round log (kept under the table) -->
+    <div class="mt-4 bg-black/40 p-4 rounded-xl">
       <h3 class="font-bold mb-2 text-emerald-200">Round log</h3>
       <div id="betaLog" class="text-xs space-y-1 h-40 overflow-y-auto scrollbar-thin"></div>
     </div>
@@ -455,31 +716,58 @@
     </div>
   </div>
 
-  <!-- ============ SHOP ============ -->
-  <div id="betaShop" class="hidden max-w-4xl mx-auto pt-2 pb-10">
-    <div class="flex justify-between items-center mb-4">
-      <h2 class="text-3xl font-bold">&#129689; Shop</h2>
-      <span class="text-yellow-300 font-bold">&#128176; <span id="betaShopGold">0</span>g</span>
-    </div>
-    <div id="betaShopItems" class="mb-6">
-      <!-- Top: Jokers -->
-      <div class="mb-4 bg-black/30 p-3 rounded-xl border border-purple-500/30">
-        <h3 class="text-xs uppercase tracking-widest text-purple-300 font-bold mb-2">&#127183; Jokers</h3>
-        <div id="betaShopJokers" class="grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
-      </div>
-      <!-- Bottom: Relics (left) + Consumables (right) -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div class="bg-black/30 p-3 rounded-xl border border-pink-500/30">
-          <h3 class="text-xs uppercase tracking-widest text-pink-300 font-bold mb-2">&#128081; Relics</h3>
-          <div id="betaShopRelics" class="space-y-2"></div>
-        </div>
-        <div class="bg-black/30 p-3 rounded-xl border border-amber-500/30">
-          <h3 class="text-xs uppercase tracking-widest text-amber-300 font-bold mb-2">&#127881; Consumables &amp; Services</h3>
-          <div id="betaShopConsumables" class="space-y-2"></div>
-        </div>
+  <!-- ============ SHOP (Stitch design) ============ -->
+  <div id="betaShop" class="hidden max-w-7xl mx-auto pt-2 pb-32">
+    <!-- Top strip: Shop label + gold counter -->
+    <div class="px-6 py-3 bg-slate-900/60 backdrop-blur-md border border-slate-700/50 rounded-lg mb-3 flex justify-between items-center">
+      <div class="font-eyebrow-label text-eyebrow-label text-on-surface-variant uppercase tracking-widest">Shop</div>
+      <div class="flex items-center gap-2 text-primary">
+        <span class="material-symbols-outlined text-[18px] icon-fill">paid</span>
+        <span class="font-button-text text-button-text"><span id="betaShopGold">0</span>G</span>
       </div>
     </div>
-    <button id="betaShopContinueBtn" class="w-full bg-blue-600 hover:bg-blue-700 transition px-6 py-3 rounded-lg font-bold">Continue to Floor <span id="betaShopNextFloor">2</span></button>
+
+    <!-- Main 8/4 grid: left=Jokers+Services, right=Cards. #betaShopItems toggles
+         visibility when a service picker (Engraver/Stripper/Forger) is open. -->
+    <div id="betaShopItems" class="grid grid-cols-1 md:grid-cols-12 gap-panel-gap">
+      <!-- Left column -->
+      <div class="col-span-1 md:col-span-8 flex flex-col gap-panel-gap">
+        <!-- Jokers (3-up grid) -->
+        <section class="slate-glass rounded-xl p-6">
+          <h2 class="font-eyebrow-label text-eyebrow-label text-outline mb-4">JOKERS</h2>
+          <div id="betaShopJokers" class="grid grid-cols-1 sm:grid-cols-3 gap-4"></div>
+        </section>
+        <!-- Your Jokers (sell-back; populated by renderShopSellJokers in beta.js) -->
+        <section class="slate-glass rounded-xl p-6">
+          <h2 class="font-eyebrow-label text-eyebrow-label text-outline mb-2">YOUR JOKERS</h2>
+          <p class="text-[10px] text-on-surface-variant mb-4">Sell back at 75% of price &middot; starter jokers refund 25%.</p>
+          <div id="betaShopMyJokers" class="flex flex-col gap-3"></div>
+        </section>
+        <!-- Services & Consumables (vertical list) -->
+        <section class="slate-glass rounded-xl p-6">
+          <h2 class="font-eyebrow-label text-eyebrow-label text-outline mb-4">SERVICES &amp; CONSUMABLES</h2>
+          <div id="betaShopConsumables" class="flex flex-col gap-3"></div>
+        </section>
+      </div>
+
+      <!-- Right column: Cards (#betaShopRelics is repurposed as the cards
+           container by renderShop. The outer wrapper keeps `.bg-black/30`
+           because the renderer uses closest('.bg-black\\/30') to find this
+           section's heading.) -->
+      <div class="col-span-1 md:col-span-4 flex flex-col gap-panel-gap">
+        <section class="slate-glass bg-black/30 rounded-xl p-6 h-full flex flex-col">
+          <h3 class="text-xs uppercase tracking-widest text-blue-300 font-bold mb-2">&#127183; Cards</h3>
+          <div id="betaShopRelics" class="flex flex-col gap-3 flex-1"></div>
+        </section>
+      </div>
+    </div>
+
+    <!-- Sticky Continue CTA pinned to the viewport bottom. -->
+    <div class="fixed bottom-0 left-0 w-full p-4 bg-gradient-to-t from-black/60 to-transparent border-t border-white/10 flex justify-center z-30">
+      <button id="betaShopContinueBtn" class="bg-primary text-black hover:brightness-110 px-8 py-4 rounded-lg font-pressure-rank font-bold text-[18px] uppercase tracking-wider w-full max-w-md shadow-[0_8px_20px_rgba(234,179,8,0.3)] transition-all active:scale-95">
+        Continue to Floor <span id="betaShopNextFloor">2</span>
+      </button>
+    </div>
   </div>
 
   <!-- ============ REWARD ============ -->
@@ -605,42 +893,52 @@
     </div>
   </div>
 
-  <div id="betaDeckInspectorModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4">
-    <div class="bg-slate-800 border-2 border-purple-400 p-6 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-      <div class="flex items-start justify-between mb-2">
+  <!-- Card Inspector — Stitch design. The 3 data containers (betaInspectorRunDeck,
+       betaInspectorRoundDeck, betaInspectorRoundCounts) keep their IDs so
+       renderDeckInspector() in beta.js still populates them. -->
+  <div id="betaDeckInspectorModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur flex items-start justify-center p-4 overflow-y-auto">
+    <div class="bg-surface-container border border-outline-variant rounded-xl shadow-2xl max-w-6xl w-full my-8 p-6 md:p-8">
+      <div class="flex items-start justify-between mb-2 pb-4 border-b border-outline-variant/30 gap-4">
         <div>
-          <h3 class="text-xl font-bold">Card Inspector</h3>
-          <p class="text-xs text-emerald-200">Every card currently in the round deck. Coloured rings mark affixes.</p>
+          <h1 class="font-display text-3xl md:text-4xl font-black text-purple-400 uppercase tracking-tighter mb-2 flex items-center gap-3"><span class="material-symbols-outlined align-middle text-[32px]">style</span>Card Inspector</h1>
+          <p class="font-body text-sm md:text-base text-on-surface-variant max-w-2xl">Every card currently in the round deck. Coloured rings mark affixes.</p>
         </div>
-        <button id="betaDeckInspectorCloseBtn" class="bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg text-sm">&times;</button>
+        <button id="betaDeckInspectorCloseBtn" aria-label="Close" class="text-slate-400 hover:text-yellow-400 transition-colors p-2 rounded-full shrink-0">
+          <span class="material-symbols-outlined">close</span>
+        </button>
       </div>
 
-      <div class="mb-4">
-        <h4 class="text-sm font-bold text-yellow-200 mb-1">Your personal deck (you build this across the run)</h4>
-        <p class="text-xs text-white/60 mb-2">Up to 24 cards. Buy Engraver in shops to add cards, Stripper to remove them. Affixes persist for the whole run.</p>
+      <!-- Personal Deck (purple-bordered Stitch panel — brand chrome accent). -->
+      <section class="mt-6 bg-surface-variant/40 backdrop-blur-md border border-purple-400 p-6 rounded-xl relative shadow-lg">
+        <div class="flex justify-between items-center mb-4 flex-wrap gap-2">
+          <h2 class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-purple-400">YOUR PERSONAL DECK (YOU BUILD THIS ACROSS THE RUN)</h2>
+          <span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-purple-400/80" id="betaInspectorRunCapacity">&mdash; / 24 CAPACITY</span>
+        </div>
+        <p class="text-xs text-on-surface-variant mb-3">Up to 24 cards (32 with Stacked Deck). Buy Engraver in shops to add cards, Stripper to remove them. Affixes persist for the whole run.</p>
         <div id="betaInspectorRunDeck" class="flex flex-wrap gap-2"></div>
-      </div>
+      </section>
 
-      <div class="mb-4">
-        <h4 class="text-sm font-bold text-cyan-200 mb-1">Round deck (live — every card in play right now)</h4>
-        <p class="text-xs text-white/60 mb-2">Per-rank cap of 8 keeps each round balanced no matter how big personal decks grow. Each floor, a few draw-pile cards get random affixes (more per floor).</p>
-        <div id="betaInspectorRoundDeck" class="flex flex-wrap gap-1"></div>
-        <div id="betaInspectorRoundCounts" class="text-xs text-white/70 mt-2"></div>
-      </div>
-
-      <div class="mb-2">
-        <h4 class="text-sm font-bold text-pink-200 mb-1">Affix legend <span class="text-white/50 font-normal">(click for details)</span></h4>
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-          <button data-beta-affix="gilded" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-yellow-400" style="width:32px;height:44px;">A</div><span>Gilded</span></button>
-          <button data-beta-affix="glass" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-cyan-400" style="width:32px;height:44px;">A</div><span>Glass</span></button>
-          <button data-beta-affix="spiked" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-red-400" style="width:32px;height:44px;">A</div><span>Spiked</span></button>
-          <button data-beta-affix="cursed" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-purple-500" style="width:32px;height:44px;">A</div><span>Cursed</span></button>
-          <button data-beta-affix="steel" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-gray-300" style="width:32px;height:44px;">A</div><span>Steel</span></button>
-          <button data-beta-affix="mirage" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face card-rainbow flex items-center justify-center text-base font-bold text-black rounded" style="width:32px;height:44px;">A</div><span>Mirage</span></button>
-          <button data-beta-affix="hollow" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-indigo-400" style="width:32px;height:44px;">A</div><span>Hollow</span></button>
-          <button data-beta-affix="echo" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition"><div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ring-2 ring-fuchsia-400" style="width:32px;height:44px;">A</div><span>Echo</span></button>
+      <!-- Round Deck (rank rows, populated by beta.js) -->
+      <section class="mt-4 bg-surface-variant/20 backdrop-blur-md border border-outline/20 p-6 rounded-xl">
+        <div class="flex justify-between items-center mb-4 flex-wrap gap-2">
+          <h2 class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant">ROUND DECK</h2>
+          <span class="text-xs text-on-surface-variant" id="betaInspectorRoundCounts">&mdash;</span>
         </div>
-      </div>
+        <div id="betaInspectorRoundDeck" class="flex flex-col gap-4"></div>
+      </section>
+
+      <!-- Affix Legend (compact strip) -->
+      <section class="mt-4 bg-surface-container-low border border-outline/10 p-4 rounded-lg flex flex-wrap items-center gap-x-6 gap-y-2 shadow-inner">
+        <span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant">Legend</span>
+        <button data-beta-affix="gilded" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition text-xs"><div class="card card-face flex items-center justify-center text-sm font-bold text-black rounded ring-2 ring-yellow-400" style="width:24px;height:34px;">A</div><span>Gilded</span></button>
+        <button data-beta-affix="glass" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition text-xs"><div class="card card-face flex items-center justify-center text-sm font-bold text-black rounded ring-2 ring-cyan-400" style="width:24px;height:34px;">A</div><span>Glass</span></button>
+        <button data-beta-affix="spiked" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition text-xs"><div class="card card-face flex items-center justify-center text-sm font-bold text-black rounded ring-2 ring-red-400" style="width:24px;height:34px;">A</div><span>Spiked</span></button>
+        <button data-beta-affix="cursed" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition text-xs"><div class="card card-face flex items-center justify-center text-sm font-bold text-black rounded ring-2 ring-purple-500" style="width:24px;height:34px;">A</div><span>Cursed</span></button>
+        <button data-beta-affix="steel" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition text-xs"><div class="card card-face flex items-center justify-center text-sm font-bold text-black rounded ring-2 ring-gray-300" style="width:24px;height:34px;">A</div><span>Steel</span></button>
+        <button data-beta-affix="mirage" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition text-xs"><div class="card card-face card-rainbow flex items-center justify-center text-sm font-bold text-black rounded" style="width:24px;height:34px;">A</div><span>Mirage</span></button>
+        <button data-beta-affix="hollow" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition text-xs"><div class="card card-face flex items-center justify-center text-sm font-bold text-black rounded ring-2 ring-indigo-400" style="width:24px;height:34px;">A</div><span>Hollow</span></button>
+        <button data-beta-affix="echo" class="beta-affix-legend flex items-center gap-2 text-left px-1 py-1 rounded hover:bg-white/10 cursor-pointer transition text-xs"><div class="card card-face flex items-center justify-center text-sm font-bold text-black rounded ring-2 ring-fuchsia-400" style="width:24px;height:34px;">A</div><span>Echo</span></button>
+      </section>
     </div>
   </div>
 
@@ -1177,6 +1475,7 @@
           '<span class="text-white/60">Floor ' + h.maxFloor + '</span>' +
           '<span class="text-white/40">' + escapeHtml(date) + '</span>' +
         '</div>';
+
       });
       list.innerHTML = rows.join('');
     }
@@ -1232,7 +1531,9 @@
   })();
 </script>
 
-  
+<!-- Phase 1 wiring lives in /beta-topnav.js. -->
+<script src="/beta-topnav.js"></script>
+
   <div id="betaMpTattletaleModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4">
     <div class="bg-slate-800 border-2 border-purple-400 p-6 rounded-2xl shadow-2xl max-w-md w-full text-center">
       <h3 class="text-xl font-bold mb-1">Tattletale &mdash; <span id="betaMpTattletaleTarget"></span></h3>

@@ -348,7 +348,7 @@
     echoing:  { id: 'echoing',  name: 'Echoing',  desc: 'Each play: 20% chance the first card is flashed to all players.' },
     silent:   { id: 'silent',   name: 'Silent',   desc: 'No bot tells are visible this floor.' },
     tariff:   { id: 'tariff',   name: 'Tariff',   desc: 'Each Liar call you make costs 5g.' },
-    inverted: { id: 'inverted', name: 'Inverted', desc: 'Target rank is locked to J this floor — Jacks are truth, all other ranks are bluffs.' },
+    inverted: { id: 'inverted', name: 'Inverted', minFloor: 7, desc: 'Target rank is locked to J this floor — Jacks are truth, all other ranks are bluffs. Only spawns after floor 6.' },
     sticky:   { id: 'sticky',   name: 'Sticky',   desc: 'Once a card is revealed, it stays face-up in the pile area for the rest of the round.' },
     rapid:    { id: 'rapid',    name: 'Rapid',    desc: 'Challenge windows are 2 seconds for everyone.' },
     richFolk: { id: 'richFolk', name: 'Rich Folk', desc: 'Gold rewards halved, but joker prices in the shop are 50% off.' },
@@ -382,6 +382,16 @@
   };
 
   function isBossFloor(f) { return f === 3 || f === 6 || f === 9; }
+  // Returns the floor-modifier IDs eligible to spawn on the given floor.
+  // Each entry in FLOOR_MODIFIERS may carry a `minFloor` field; modifiers
+  // gated by that field are filtered out below the threshold.
+  function eligibleFloorModIds(floor) {
+    return Object.keys(FLOOR_MODIFIERS).filter(id => {
+      const m = FLOOR_MODIFIERS[id];
+      if (m && m.minFloor && floor < m.minFloor) return false;
+      return true;
+    });
+  }
   // Returns the *active* boss for a given floor, considering Floor 9 alts.
   function getBoss(f) {
     if (f === 9 && runState && runState.floor9BossId) {
@@ -708,7 +718,7 @@
         const nextFloor = (runState.currentFloor || 1) + 1;
         let nextMod = null;
         if (nextFloor >= 4 && nextFloor <= 8 && (nextFloor !== 6)) {  // not a boss floor
-          const ids = Object.keys(FLOOR_MODIFIERS);
+          const ids = eligibleFloorModIds(nextFloor);
           nextMod = ids[Math.floor(Math.random() * ids.length)];
           runState.preRolledNextFloorMod = nextMod;
         }
@@ -1073,7 +1083,9 @@
       if (character.startingJoker) {
         const jokerData = JOKER_CATALOG[character.startingJoker];
         if (jokerData) {
-          equipJoker(jokerData);
+          // Tag with starter:true so the shop sell-back math can apply the
+          // reduced (25%) refund for character-granted starter jokers.
+          equipJoker(jokerData, { starter: true });
           if (character.startingJoker === 'tattletale') {
             runState.tattletaleChargesThisFloor = TATTLETALE_CHARGES_PER_FLOOR;
           }
@@ -1692,13 +1704,23 @@
       hasJoker('tattletale') ? TATTLETALE_CHARGES_PER_FLOOR : 0;
     setMaxFloorReached(runState.currentFloor);
 
-    // Phase 8+: pick floor modifier (Act 2+ only on non-boss floors)
+    // Phase 8+: pick floor modifier (Act 2+ only on non-boss floors). Each
+    // candidate modifier may carry a minFloor gate (e.g. Inverted only spawns
+    // after floor 6); eligibleFloorModIds applies that filter.
     if (runState.currentFloor >= 4 && !isBossFloor(runState.currentFloor)) {
       if (runState.preRolledNextFloorMod && FLOOR_MODIFIERS[runState.preRolledNextFloorMod]) {
-        runState.currentFloorModifier = runState.preRolledNextFloorMod;
+        // Card Sharp pre-roll might have been done before the gate was added,
+        // or for a different floor. Validate against the actual current floor.
+        const m = FLOOR_MODIFIERS[runState.preRolledNextFloorMod];
+        if (m.minFloor && runState.currentFloor < m.minFloor) {
+          const ids = eligibleFloorModIds(runState.currentFloor);
+          runState.currentFloorModifier = ids[Math.floor(Math.random() * ids.length)];
+        } else {
+          runState.currentFloorModifier = runState.preRolledNextFloorMod;
+        }
         runState.preRolledNextFloorMod = null;
       } else {
-        const ids = Object.keys(FLOOR_MODIFIERS);
+        const ids = eligibleFloorModIds(runState.currentFloor);
         runState.currentFloorModifier = ids[Math.floor(Math.random() * ids.length)];
       }
     } else {
@@ -3314,6 +3336,7 @@
     renderStatusBar();
     renderJokerRow();
     renderConsumablesRow();
+    renderRelicsRow();
     renderOpponents();
     renderHand();
     renderTurnIndicator();
@@ -3529,30 +3552,65 @@
     const list = document.getElementById('betaConsumablesList');
     if (!list || !runState) return;
     list.innerHTML = '';
-    for (const id of Object.keys(CONSUMABLE_INFO)) {
+    // Only render the consumables the player actually owns. When the inventory
+    // is empty show a muted "None yet." placeholder (mirrors renderRelicsRow).
+    const ownedIds = Object.keys(CONSUMABLE_INFO).filter(id => (runState.inventory[id] || 0) > 0);
+    if (ownedIds.length === 0) {
+      const empty = document.createElement('span');
+      empty.className = 'italic text-white/40';
+      empty.textContent = 'None yet.';
+      list.appendChild(empty);
+      return;
+    }
+    for (const id of ownedIds) {
       const info = CONSUMABLE_INFO[id];
       const count = runState.inventory[id] || 0;
       const pill = document.createElement('div');
-      const owned = count > 0;
-      const usable = owned && _consumableUsableNow(id);
-      let cls = 'inline-flex items-center gap-1 px-2 py-1 rounded transition ';
-      if (usable) cls += 'bg-amber-700/70 text-amber-50 cursor-pointer hover:bg-amber-600/80 ring-1 ring-amber-300';
-      else if (owned) cls += 'bg-amber-900/40 text-amber-100 cursor-pointer hover:bg-amber-800/60';
-      else cls += 'bg-black/40 text-white/40';
+      const usable = _consumableUsableNow(id);
+      let cls = 'inline-flex items-center gap-1 px-2 py-1 rounded transition cursor-pointer ';
+      if (usable) cls += 'bg-amber-700/70 text-amber-50 hover:bg-amber-600/80 ring-1 ring-amber-300';
+      else        cls += 'bg-amber-900/40 text-amber-100 hover:bg-amber-800/60';
       pill.className = cls;
       const useHint = usable ? ' &middot; <span class="text-[10px] text-amber-200">click to use</span>' : '';
       pill.innerHTML = escapeHtml(info.name) +
         ' <span class="font-bold">(' + count + ')</span>' + useHint;
       pill.title = info.desc;
-      if (owned) {
-        pill.addEventListener('click', () => {
-          if (usable && CONSUMABLE_USE_HANDLERS[id]) {
-            CONSUMABLE_USE_HANDLERS[id]();
-          } else {
-            showInfoModal(info.name, 'You own ' + count, info.desc);
-          }
-        });
-      }
+      pill.addEventListener('click', () => {
+        if (usable && CONSUMABLE_USE_HANDLERS[id]) {
+          CONSUMABLE_USE_HANDLERS[id]();
+        } else {
+          showInfoModal(info.name, 'You own ' + count, info.desc);
+        }
+      });
+      list.appendChild(pill);
+    }
+  }
+
+
+  function renderRelicsRow() {
+    const list = document.getElementById('betaRelicsList');
+    if (!list || !runState) return;
+    list.innerHTML = '';
+    const owned = (runState.relics || []);
+    if (owned.length === 0) {
+      const empty = document.createElement('span');
+      empty.className = 'italic text-white/40';
+      empty.textContent = 'None yet.';
+      list.appendChild(empty);
+      return;
+    }
+    for (const id of owned) {
+      const r = RELIC_CATALOG[id];
+      if (!r) continue;
+      const pill = document.createElement('div');
+      pill.className = 'inline-flex items-center gap-2 px-2 py-1 rounded bg-amber-900/40 text-amber-100 cursor-pointer hover:bg-amber-800/60 transition ring-1 ring-amber-500/30';
+      pill.title = r.desc || '';
+      pill.innerHTML =
+        '<span class="material-symbols-outlined text-[14px] text-amber-300">diamond</span>' +
+        '<span class="font-bold truncate">' + escapeHtml(r.name) + '</span>';
+      pill.addEventListener('click', () => {
+        showInfoModal(r.name, 'Relic', r.desc || '');
+      });
       list.appendChild(pill);
     }
   }
@@ -3603,47 +3661,48 @@
   function renderDeckInspector() {
     if (!runState) return;
 
-    // 1) Player's run deck — sorted A, K, Q, 10
+    const order = ['A', 'K', 'Q', 'J', '10'];
+
+    // ---- Personal run deck (sorted A,K,Q,10,J; affixed first within rank) ----
     const runDeckDiv = document.getElementById('betaInspectorRunDeck');
     runDeckDiv.innerHTML = '';
-    const order = ['A', 'K', 'Q', '10', 'J'];
+    const runOrder = ['A', 'K', 'Q', '10', 'J'];
     const sortedRun = runState.runDeck.slice().sort((a, b) => {
-      const ai = order.indexOf(a.rank), bi = order.indexOf(b.rank);
+      const ai = runOrder.indexOf(a.rank), bi = runOrder.indexOf(b.rank);
       if (ai !== bi) return ai - bi;
-      // affixed cards first within same rank
       if ((a.affix ? 1 : 0) !== (b.affix ? 1 : 0)) return (b.affix ? 1 : 0) - (a.affix ? 1 : 0);
       return a.id.localeCompare(b.id);
     });
     for (const c of sortedRun) {
       runDeckDiv.appendChild(_makeInspectorCardEl(c, { markYours: false }));
     }
+    // Capacity badge (e.g. "8 / 24 CAPACITY"). Cap is 24, or 32 with Stacked Deck.
+    const capEl = document.getElementById('betaInspectorRunCapacity');
+    if (capEl) {
+      const cap = (typeof runDeckCap === 'function') ? runDeckCap() : 24;
+      capEl.textContent = runState.runDeck.length + ' / ' + cap + ' CAPACITY';
+    }
 
-    // 2) Round-deck composition — show the LIVE deck (every card currently in
-    //    the round). This includes hands, draw pile, pile, and the last-play
-    //    cards, so per-floor random-affix infusions and mid-round changes are
-    //    reflected accurately. If no round is active yet, fall back to a
-    //    capped preview.
+    // ---- Round-deck composition (live cards in play, grouped by rank rows) ----
     const all = [];
     if (state) {
-      // Live snapshot — all cards currently in play
       for (const hand of (state.hands || [])) for (const c of hand) all.push({ ...c });
       for (const c of (state.drawPile || [])) all.push({ ...c });
       for (const c of (state.pile || [])) all.push({ ...c });
       if (state.lastPlay && Array.isArray(state.lastPlay.cards)) {
         for (const c of state.lastPlay.cards) all.push({ ...c });
       }
-      // De-duplicate by id (lastPlay cards may also live in pile/hands)
       const seen = new Set();
-      for (let i = all.length - 1; i >= 0; i--) {
-        const id = all[i].id;
-        if (id && seen.has(id)) all.splice(i, 1);
+      for (let k = all.length - 1; k >= 0; k--) {
+        const id = all[k].id;
+        if (id && seen.has(id)) all.splice(k, 1);
         else if (id) seen.add(id);
       }
     } else {
-      // No live round — preview using the cap logic so the count matches
-      // what would actually be dealt.
-      for (let i = 0; i < 6; i++) {
-        all.push({ rank: 'J', owner: -1, affix: null, id: 'rd_J_' + i });
+      // No live round — preview using the cap logic so the count matches what
+      // would actually be dealt.
+      for (let k = 0; k < 6; k++) {
+        all.push({ rank: 'J', owner: -1, affix: null, id: 'rd_J_' + k });
       }
       const buckets = { 'A': [], 'K': [], 'Q': [], '10': [] };
       for (let p = 0; p < 4; p++) {
@@ -3661,46 +3720,54 @@
           const affixed = cards.filter(c => c.affix);
           const plain = cards.filter(c => !c.affix);
           const ordered = affixed.concat(plain);
-          for (let i = 0; i < cap; i++) all.push(ordered[i]);
+          for (let k = 0; k < cap; k++) all.push(ordered[k]);
         }
       }
     }
 
-    // Sort: rank order, owner asc (you=0 first inside each rank? show base J's first)
-    all.sort((a, b) => {
-      const ai = order.indexOf(a.rank), bi = order.indexOf(b.rank);
-      if (ai !== bi) return ai - bi;
-      if (a.owner !== b.owner) {
-        // your cards first within rank, then bots, then base
-        const wa = (a.owner === 0) ? 0 : (a.owner === -1 ? 9 : a.owner);
-        const wb = (b.owner === 0) ? 0 : (b.owner === -1 ? 9 : b.owner);
-        return wa - wb;
-      }
-      if ((a.affix ? 1 : 0) !== (b.affix ? 1 : 0)) return (b.affix ? 1 : 0) - (a.affix ? 1 : 0);
-      return 0;
-    });
+    // Group by rank for the row layout. Within a rank, sort by owner (you first,
+    // bots next, base last) and put affixed cards first.
+    const byRank = {};
+    for (const r of order) byRank[r] = [];
+    for (const c of all) if (byRank[c.rank]) byRank[c.rank].push(c);
+    for (const r of order) {
+      byRank[r].sort((a, b) => {
+        if (a.owner !== b.owner) {
+          const wa = (a.owner === 0) ? 0 : (a.owner === -1 ? 9 : a.owner);
+          const wb = (b.owner === 0) ? 0 : (b.owner === -1 ? 9 : b.owner);
+          return wa - wb;
+        }
+        if ((a.affix ? 1 : 0) !== (b.affix ? 1 : 0)) return (b.affix ? 1 : 0) - (a.affix ? 1 : 0);
+        return 0;
+      });
+    }
 
     const roundDeckDiv = document.getElementById('betaInspectorRoundDeck');
     roundDeckDiv.innerHTML = '';
-    let lastRank = null;
-    for (const c of all) {
-      if (lastRank !== null && c.rank !== lastRank) {
-        const sep = document.createElement('div');
-        sep.className = 'w-full h-1';
-        roundDeckDiv.appendChild(sep);
-      }
-      lastRank = c.rank;
-      roundDeckDiv.appendChild(_makeInspectorCardEl(c, { markYours: true }));
+    for (const r of order) {
+      const cards = byRank[r];
+      if (cards.length === 0) continue;
+      const row = document.createElement('div');
+      row.className = 'flex items-center gap-4';
+      row.innerHTML =
+        '<div class="w-10 text-center font-pressure-rank text-pressure-rank text-on-surface-variant shrink-0">' +
+          (r === '10' ? '10' : r) +
+        '</div>';
+      const grid = document.createElement('div');
+      grid.className = 'flex flex-wrap gap-1.5';
+      for (const c of cards) grid.appendChild(_makeInspectorCardEl(c, { markYours: true }));
+      row.appendChild(grid);
+      roundDeckDiv.appendChild(row);
     }
 
-    // Counts summary
+    // Counts summary in the section header (e.g. "A x14, K x14, ... — Total 62, Affixed 3")
     const counts = {};
     for (const r of order) counts[r] = 0;
     for (const c of all) counts[c.rank] = (counts[c.rank] || 0) + 1;
     const affixed = all.filter(c => c.affix).length;
-    const summary = order.filter(r => counts[r]).map(r => r + '×' + counts[r]).join('  ·  ');
+    const summary = order.filter(r => counts[r]).map(r => r + '\u00d7' + counts[r]).join(' \u00b7 ');
     document.getElementById('betaInspectorRoundCounts').textContent =
-      summary + '   —   Total: ' + all.length + ' cards   —   Affixed: ' + affixed;
+      summary + '   \u2014   Total: ' + all.length + '   \u2014   Affixed: ' + affixed;
   }
 
   function openDeckInspector() {
@@ -4059,7 +4126,7 @@
     }
     return 1;
   }
-  function equipJoker(jokerData) {
+  function equipJoker(jokerData, options) {
     // Stackable joker already equipped → bump the stack instead of taking
     // another slot. Caller (the shop buy flow) is responsible for checking
     // we haven't hit maxStack before calling this.
@@ -4074,6 +4141,9 @@
     for (let i = 0; i < runState.jokers.length; i++) {
       if (runState.jokers[i] === null) {
         runState.jokers[i] = { ...jokerData };
+        // Optional flag: starter jokers (granted by the character at run start)
+        // refund only 25% on sell instead of the regular 75%.
+        if (options && options.starter) runState.jokers[i].starter = true;
         if (jokerData && jokerData.stackable) {
           runState.jokerStacks = runState.jokerStacks || {};
           runState.jokerStacks[jokerData.id] = 1;
@@ -4087,6 +4157,39 @@
     }
     return false;
   }
+
+  // Compute the sell-back gold value for the joker in the given slot.
+  // Regular jokers refund 75%; starter (character-granted) jokers refund 25%.
+  // Stackable jokers refund per-stack (one stack at a time).
+  function jokerSellValue(slotIdx) {
+    if (!runState || !runState.jokers) return 0;
+    const j = runState.jokers[slotIdx];
+    if (!j) return 0;
+    const price = j.price || 0;
+    const pct = j.starter ? 0.25 : 0.75;
+    return Math.floor(price * pct);
+  }
+
+  // Sell the joker in slotIdx. Returns gold refunded (0 if nothing was sold).
+  // For stackable jokers with stack > 1, sells one stack and keeps the slot;
+  // otherwise frees the whole slot.
+  function sellJoker(slotIdx) {
+    if (!runState || !runState.jokers) return 0;
+    const j = runState.jokers[slotIdx];
+    if (!j) return 0;
+    const refund = jokerSellValue(slotIdx);
+    if (j.stackable && runState.jokerStacks && runState.jokerStacks[j.id] > 1) {
+      runState.jokerStacks[j.id] = runState.jokerStacks[j.id] - 1;
+    } else {
+      runState.jokers[slotIdx] = null;
+      if (runState.jokerStacks && j.stackable) delete runState.jokerStacks[j.id];
+    }
+    if (refund > 0) addGold(refund);
+    log('Sold ' + j.name + ' for ' + refund + 'g.' + (j.starter ? ' (starter — 25%)' : ' (75%)'));
+    return refund;
+  }
+  // Expose for the inline shop UI to call.
+  try { window.lugenSellJoker = sellJoker; } catch (e) {}
 
   // Per-account relic unlock check. Returns true if no condition or condition met.
   function isRelicUnlocked(id) {
@@ -5883,9 +5986,53 @@
       return row;
   }
 
+  // Build the "YOUR JOKERS" sell-back section content. Mirrors the shop's
+  // visual language so it sits naturally beside the offer cards.
+  function renderShopSellJokers() {
+    const list = document.getElementById('betaShopMyJokers');
+    if (!list || !runState || !runState.jokers) return;
+    list.innerHTML = '';
+    const filled = runState.jokers.filter(j => j !== null).length;
+    if (filled === 0) {
+      list.innerHTML = '<p class="text-xs text-on-surface-variant italic">No jokers equipped.</p>';
+      return;
+    }
+    for (let i = 0; i < runState.jokers.length; i++) {
+      const j = runState.jokers[i];
+      if (!j) continue;
+      const refund = jokerSellValue(i);
+      const stack = (j.stackable && runState.jokerStacks && runState.jokerStacks[j.id]) || 1;
+      const stackBadge = stack > 1
+        ? ' <span class="ml-1 text-[10px] font-bold bg-yellow-500/30 text-yellow-200 px-1 rounded">x' + stack + '</span>'
+        : '';
+      const starterBadge = j.starter
+        ? ' <span class="ml-1 text-[9px] uppercase tracking-widest font-bold text-rose-300">starter</span>'
+        : '';
+      const row = document.createElement('div');
+      row.className = 'bg-surface-container p-3 rounded-lg border border-outline-variant flex items-center gap-3';
+      row.innerHTML =
+        '<div class="flex-1 min-w-0">' +
+          '<div class="font-button-text text-button-text text-on-surface truncate">' + escapeHtml(j.name) + stackBadge + starterBadge + '</div>' +
+          '<div class="text-[10px] text-on-surface-variant">' + escapeHtml(j.rarity || 'Common') + ' &middot; refund ' + (j.starter ? '25%' : '75%') + ' of ' + (j.price || 0) + 'g</div>' +
+        '</div>' +
+        '<button class="bg-amber-600 hover:bg-amber-500 text-black px-3 py-1.5 rounded font-button-text text-button-text text-xs whitespace-nowrap transition-all active:scale-95">' +
+          'Sell ' + refund + 'g' +
+        '</button>';
+      const btn = row.querySelector('button');
+      const slotIdx = i;
+      btn.addEventListener('click', () => {
+        sellJoker(slotIdx);
+        renderShop();
+        render();
+      });
+      list.appendChild(row);
+    }
+  }
+
   function renderShop() {
     document.getElementById('betaShopGold').textContent = runState.gold;
     document.getElementById('betaShopNextFloor').textContent = runState.currentFloor;
+    renderShopSellJokers();
     const offer = (runState && runState.shopOffer && runState.shopOffer.length > 0)
       ? runState.shopOffer
       : SHOP_ITEMS;
@@ -7270,31 +7417,111 @@
     if (modal) return modal;
     modal = document.createElement('div');
     modal.id = 'betaCatalogModal';
-    modal.className = 'hidden fixed inset-0 bg-black/80 backdrop-blur z-50 flex items-center justify-center p-4';
+    // Wider, Stitch-archive-style container. Outer scrolls (instead of inner)
+    // so the content can stretch full-width on big screens.
+    modal.className = 'hidden fixed inset-0 z-50 bg-black/80 backdrop-blur flex items-start justify-center p-4 overflow-y-auto';
     modal.innerHTML =
-      '<div class="bg-slate-800 border-2 border-purple-400 p-6 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto scrollbar-thin">' +
-        '<div class="flex items-start justify-between mb-3 sticky top-0 bg-slate-800 pb-2">' +
+      '<div class="bg-surface-container border border-outline-variant rounded-xl shadow-2xl max-w-7xl w-full my-8 p-6 md:p-8">' +
+        '<div class="flex items-start justify-between mb-2 pb-4 border-b border-outline-variant/30 gap-4">' +
           '<div>' +
-            '<h3 id="betaCatalogTitle" class="text-xl font-bold"></h3>' +
-            '<p id="betaCatalogSubtitle" class="text-xs text-emerald-200"></p>' +
+            '<h1 id="betaCatalogTitle" class="font-display text-3xl md:text-4xl font-black text-purple-400 uppercase tracking-tighter mb-2 flex items-center gap-3"></h1>' +
+            '<p id="betaCatalogSubtitle" class="font-body text-sm md:text-base text-on-surface-variant max-w-2xl"></p>' +
           '</div>' +
-          '<button id="betaCatalogCloseBtn" class="bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg text-sm">Close</button>' +
+          '<button id="betaCatalogCloseBtn" aria-label="Close" class="text-slate-400 hover:text-yellow-400 transition-colors p-2 rounded-full shrink-0">' +
+            '<span class="material-symbols-outlined">close</span>' +
+          '</button>' +
         '</div>' +
-        '<div id="betaCatalogBody" class="space-y-2"></div>' +
+        '<div id="betaCatalogBody" class="mt-6"></div>' +
       '</div>';
     document.body.appendChild(modal);
     modal.querySelector('#betaCatalogCloseBtn').addEventListener('click', () => modal.classList.add('hidden'));
     modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) modal.classList.add('hidden');
+    });
     return modal;
   }
 
-  // Pretty rarity badge color for jokers.
+  // ===== Stitch-style catalog card helpers (Phase 4 visual pass) =====
+  // Per-rarity color for the eyebrow label + bottom badge.
+  const _RARITY_TONE_TEXT = {
+    Common:    'text-slate-300',
+    Uncommon:  'text-emerald-400',
+    Rare:      'text-blue-400',
+    Legendary: 'text-amber-400',
+    Exotic:    'text-rose-400',
+  };
+  // Material-symbol glyph that represents each rarity tier (used as a
+  // generic icon for jokers/relics/consumables that don't carry their own).
+  const _RARITY_GLYPH = {
+    Common:    'poker_chip',
+    Uncommon:  'magic_button',
+    Rare:      'diamond',
+    Legendary: 'crown',
+    Exotic:    'casino',
+  };
+  // Backwards-compatible badge colors (still used by some PvP code paths).
   const _RARITY_TONE = {
     Common:    'bg-gray-700 text-gray-100',
     Uncommon:  'bg-emerald-700 text-emerald-100',
     Rare:      'bg-blue-700 text-blue-100',
     Legendary: 'bg-amber-700 text-amber-100',
   };
+
+  // Build a Stitch-style archive card. `opts` fields:
+  //   eyebrow      - small uppercase tag in the top-left (string, escaped here)
+  //   eyebrowTone  - tailwind text color class for the eyebrow + footer-right
+  //   badges       - raw HTML for additional badges in the top-right (escaped by caller)
+  //   iconHtml     - raw HTML rendered inside the icon well (escaped by caller)
+  //   title        - card title (string, escaped here)
+  //   desc         - description body (string, escaped here)
+  //   footerLeft   - raw HTML for footer-left (e.g. price). null = no footer.
+  //   footerRight  - raw HTML for footer-right (e.g. type/rarity). null = no footer.
+  //   highlight    - optional extra classes (e.g. for owned/equipped state)
+  function _buildStitchCard(opts) {
+    const tone = opts.eyebrowTone || 'text-slate-300';
+    const card = document.createElement('div');
+    card.className = 'bg-surface-container-high border border-outline-variant rounded-xl p-6 flex flex-col gap-4 group hover:border-primary/50 transition-all ' + (opts.highlight || '');
+    const top =
+      '<div class="flex justify-between items-start gap-2 min-h-[16px]">' +
+        '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] ' + tone + '">' + escapeHtml(opts.eyebrow || '') + '</span>' +
+        (opts.badges || '') +
+      '</div>';
+    const iconWell =
+      '<div class="bg-surface-container-lowest aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-outline-variant/40 relative overflow-hidden">' +
+        (opts.iconHtml || '') +
+      '</div>';
+    const titleAndDesc =
+      '<div>' +
+        '<h3 class="font-display text-lg font-bold text-on-surface mb-1">' + escapeHtml(opts.title || '') + '</h3>' +
+        '<p class="font-body text-sm text-on-surface-variant leading-relaxed">' + escapeHtml(opts.desc || '') + '</p>' +
+      '</div>';
+    const footer = (opts.footerLeft || opts.footerRight)
+      ? ('<div class="mt-auto flex justify-between items-center pt-4 border-t border-outline-variant/30 gap-2">' +
+           (opts.footerLeft  || '') +
+           (opts.footerRight || '') +
+         '</div>')
+      : '';
+    card.innerHTML = top + iconWell + titleAndDesc + footer;
+    return card;
+  }
+
+  // Helper: build a section with an uppercase eyebrow header followed by a
+  // responsive grid of catalog cards. Returns the grid element so callers can
+  // append cards into it.
+  function _buildCatalogSection(parent, headerText, headerTone) {
+    const wrap = document.createElement('section');
+    wrap.className = 'mb-8';
+    const h = document.createElement('h2');
+    h.className = 'font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] mb-3 ' + (headerTone || 'text-on-surface-variant');
+    h.textContent = headerText;
+    const grid = document.createElement('div');
+    grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4';
+    wrap.appendChild(h);
+    wrap.appendChild(grid);
+    parent.appendChild(wrap);
+    return grid;
+  }
 
   function _openCatalog(kind) {
     const modal = _ensureCatalogModal();
@@ -7303,10 +7530,11 @@
     const body    = modal.querySelector('#betaCatalogBody');
     body.innerHTML = '';
     if (kind === 'jokers') {
-      titleEl.textContent = '\ud83c\udca0 Jokers';
+      titleEl.innerHTML = '<span class="material-symbols-outlined align-middle text-[32px]">menu_book</span> Joker Compendium';
+      body.className = 'mt-6';
       // Catalog reads runState.jokers for solo. In MP there's no runState
-      // here — the MP client tracks state on window.lugenLastMpState (set
-      // by beta-mp.js). Fall through to that when solo state is empty.
+      // here -- the MP client tracks state on window.lugenLastMpState (set by
+      // beta-mp.js). Fall through to that when solo state is empty.
       let equipped = (runState && runState.jokers) ? runState.jokers.filter(j => j).map(j => j.id) : [];
       if (equipped.length === 0 &&
           typeof window.lugenLastMpState === 'object' &&
@@ -7314,8 +7542,9 @@
         const mpJokers = window.lugenLastMpState.mine.jokers || [];
         equipped = mpJokers.filter(j => j).map(j => j.id);
       }
-      subEl.textContent = 'Every joker in the game. ' + (equipped.length ? equipped.length + ' currently equipped — highlighted.' : '(none equipped right now)');
-      // Group by rarity for readability.
+      subEl.textContent = 'Discover every joker. ' + (equipped.length
+        ? equipped.length + ' currently equipped \u2014 highlighted.'
+        : 'None equipped right now.');
       const ORDER = ['Common', 'Uncommon', 'Rare', 'Legendary'];
       const byRarity = {};
       for (const id of Object.keys(JOKER_CATALOG)) {
@@ -7326,32 +7555,32 @@
       for (const rarity of ORDER) {
         const arr = byRarity[rarity];
         if (!arr || arr.length === 0) continue;
-        const header = document.createElement('div');
-        header.className = 'text-xs uppercase tracking-widest font-bold mt-2 mb-1 text-purple-300';
-        header.textContent = rarity + ' (' + arr.length + ')';
-        body.appendChild(header);
+        const tone = _RARITY_TONE_TEXT[rarity] || 'text-slate-300';
+        const grid = _buildCatalogSection(body, rarity + ' (' + arr.length + ')', tone);
         for (const j of arr) {
           const isEq = equipped.includes(j.id);
-          const row = document.createElement('div');
-          row.className = 'rounded-lg p-3 border ' + (isEq
-            ? 'bg-fuchsia-900/40 border-fuchsia-400'
-            : 'bg-black/30 border-white/10');
-          const tone = _RARITY_TONE[rarity] || 'bg-gray-700 text-gray-100';
-          row.innerHTML =
-            '<div class="flex items-baseline gap-2 mb-1">' +
-              '<span class="font-bold">' + escapeHtml(j.name) + '</span>' +
-              '<span class="text-[10px] uppercase tracking-widest font-bold px-1.5 rounded ' + tone + '">' + escapeHtml(rarity) + '</span>' +
-              (isEq ? '<span class="text-[10px] uppercase tracking-widest font-bold px-1.5 rounded bg-fuchsia-500 text-white">Equipped</span>' : '') +
-              '<span class="ml-auto text-xs text-yellow-300">' + (j.price || 0) + 'g</span>' +
-            '</div>' +
-            '<div class="text-xs text-emerald-100">' + escapeHtml(j.desc) + '</div>';
-          body.appendChild(row);
+          const glyph = _RARITY_GLYPH[rarity] || 'auto_awesome';
+          const card = _buildStitchCard({
+            eyebrow: rarity,
+            eyebrowTone: tone,
+            badges: isEq
+              ? '<span class="font-eyebrow-label text-[9px] font-black uppercase tracking-[0.2em] px-2 py-0.5 rounded bg-fuchsia-500/30 text-fuchsia-200 border border-fuchsia-400/40">Equipped</span>'
+              : '',
+            iconHtml: '<span class="material-symbols-outlined text-[48px] text-primary">' + glyph + '</span>',
+            title: j.name,
+            desc: j.desc,
+            footerLeft:  '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] text-on-surface-variant">' + (j.price || 0) + 'G</span>',
+            footerRight: '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] ' + tone + '">' + rarity.toUpperCase() + '</span>',
+            highlight: isEq ? 'border-fuchsia-400/60 ring-1 ring-fuchsia-400/30' : ''
+          });
+          grid.appendChild(card);
         }
       }
     } else if (kind === 'relics') {
-      titleEl.textContent = '\ud83d\udc51 Relics';
+      titleEl.innerHTML = '<span class="material-symbols-outlined align-middle text-[32px]">auto_awesome</span> Relics Archive';
+      body.className = 'mt-6';
       const owned = (runState && runState.relics) || [];
-      subEl.textContent = 'Every relic in the game. ' + owned.length + ' currently owned — highlighted.';
+      subEl.textContent = 'Passive effects that alter the run. ' + owned.length + ' currently owned \u2014 highlighted.';
       // Group by source: boss-pool entries first, then treasure/other.
       const sources = {};
       for (const bossId of Object.keys(BOSS_RELIC_POOL)) {
@@ -7360,89 +7589,250 @@
         }
       }
       const POOL_LABEL = { auditor: 'Auditor (Floor 3)', cheater: 'Cheater (Floor 6)', lugen: 'Lugen (Floor 9)' };
-      // Render boss pools first.
+      function _renderRelicCard(r, ownedFlag) {
+        const locked = !ownedFlag && r.unlock && !isRelicUnlocked(r.id);
+        const badges =
+          (ownedFlag ? '<span class="font-eyebrow-label text-[9px] font-black uppercase tracking-[0.2em] px-2 py-0.5 rounded bg-amber-400/30 text-amber-200 border border-amber-400/40">Owned</span>' : '') +
+          (locked   ? '<span class="font-eyebrow-label text-[9px] font-black uppercase tracking-[0.2em] px-2 py-0.5 rounded bg-rose-500/30 text-rose-200 border border-rose-400/40">Locked</span>' : '');
+        const eyebrowTone = ownedFlag ? 'text-primary' : (locked ? 'text-rose-400' : 'text-secondary');
+        const eyebrow = ownedFlag ? 'Owned' : (locked ? 'Locked' : 'Available');
+        const card = _buildStitchCard({
+          eyebrow: eyebrow,
+          eyebrowTone: eyebrowTone,
+          badges: badges,
+          iconHtml: '<span class="material-symbols-outlined text-[48px] text-primary drop-shadow-[0_0_15px_rgba(250,204,21,0.4)]">' + (locked ? 'lock' : 'diamond') + '</span>',
+          title: r.name,
+          desc: r.desc + (locked ? ' (' + (relicUnlockHint(r.id) || 'Locked.') + ')' : ''),
+          footerLeft:  '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] text-on-surface-variant">' + (r.price || 0) + 'G</span>',
+          footerRight: '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] ' + eyebrowTone + '">' + eyebrow + '</span>',
+          highlight: ownedFlag ? 'border-amber-400/60 ring-1 ring-amber-400/30' : (locked ? 'opacity-70' : '')
+        });
+        return card;
+      }
       for (const bossId of ['auditor', 'cheater', 'lugen']) {
         const ids = BOSS_RELIC_POOL[bossId] || [];
-        const header = document.createElement('div');
-        header.className = 'text-xs uppercase tracking-widest font-bold mt-2 mb-1 text-amber-300';
-        header.textContent = 'Boss reward — ' + (POOL_LABEL[bossId] || bossId);
-        body.appendChild(header);
+        if (ids.length === 0) continue;
+        const grid = _buildCatalogSection(body, 'Boss reward \u2014 ' + (POOL_LABEL[bossId] || bossId), 'text-amber-400');
         for (const id of ids) {
           const r = RELIC_CATALOG[id];
           if (!r) continue;
-          body.appendChild(_relicRow(r, owned.includes(id)));
+          grid.appendChild(_renderRelicCard(r, owned.includes(id)));
         }
       }
-      // Treasure / other (anything not in any boss pool).
       const restIds = Object.keys(RELIC_CATALOG).filter(id => !sources[id]);
       if (restIds.length > 0) {
-        const header = document.createElement('div');
-        header.className = 'text-xs uppercase tracking-widest font-bold mt-2 mb-1 text-amber-300';
-        header.textContent = 'Treasure pool / shop';
-        body.appendChild(header);
+        const grid = _buildCatalogSection(body, 'Treasure pool / shop', 'text-amber-400');
         for (const id of restIds) {
-          body.appendChild(_relicRow(RELIC_CATALOG[id], owned.includes(id)));
+          grid.appendChild(_renderRelicCard(RELIC_CATALOG[id], owned.includes(id)));
         }
       }
     } else if (kind === 'affixes') {
-      titleEl.textContent = '\u2728 Affixes';
-      subEl.textContent = 'How each affix triggers and what it does.';
+      titleEl.innerHTML = '<span class="material-symbols-outlined align-middle text-[32px]">stars</span> Affixes Legend';
+      body.className = 'mt-6';
+      subEl.textContent = 'Modifiers bonded to individual cards. How each one triggers and what it does.';
       const order = ['gilded', 'glass', 'spiked', 'cursed', 'steel', 'mirage', 'hollow', 'echo'];
+      const AFFIX_TONE = {
+        gilded: 'text-primary',
+        glass:  'text-tertiary-container',
+        spiked: 'text-error',
+        cursed: 'text-purple-400',
+        steel:  'text-slate-300',
+        mirage: 'text-pink-400',
+        hollow: 'text-on-surface-variant',
+        echo:   'text-cyan-400',
+      };
+      const grid = _buildCatalogSection(body, 'Affixes', 'text-on-surface-variant');
       for (const id of order) {
         const a = AFFIX_DETAILS[id];
         if (!a) continue;
         const ringClass = affixRingClass(id);
-        const row = document.createElement('div');
-        row.className = 'rounded-lg p-3 border bg-black/30 border-white/10';
-        row.innerHTML =
-          '<div class="flex items-baseline gap-2 mb-1">' +
-            '<div class="card card-face flex items-center justify-center text-base font-bold text-black rounded ' + (ringClass || '') + '" style="width:28px;height:38px;">A</div>' +
-            '<span class="font-bold text-base">' + escapeHtml(a.name) + '</span>' +
-            '<span class="text-[10px] uppercase tracking-widest font-bold px-1.5 rounded bg-cyan-700 text-cyan-100">' + escapeHtml(a.tag) + '</span>' +
-          '</div>' +
-          '<div class="text-xs text-emerald-100">' + escapeHtml(a.desc) + '</div>';
-        body.appendChild(row);
+        const tone = AFFIX_TONE[id] || 'text-slate-300';
+        // Icon well shows a card-back preview with the affix ring color.
+        const iconHtml =
+          '<div class="card card-face flex items-center justify-center text-3xl font-bold text-black rounded ' + (ringClass || '') + '" style="width:56px;height:80px;">A</div>';
+        const card = _buildStitchCard({
+          eyebrow: a.tag,
+          eyebrowTone: tone,
+          badges: '',
+          iconHtml: iconHtml,
+          title: a.name,
+          desc: a.desc,
+          footerLeft:  '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] ' + tone + '">' + a.tag + '</span>',
+          footerRight: '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] text-on-surface-variant">TYPE: AFFIX</span>',
+          highlight: ''
+        });
+        grid.appendChild(card);
       }
     } else if (kind === 'consumables') {
-      titleEl.textContent = '\ud83c\udf81 Consumables';
-      subEl.textContent = 'Every consumable, what it does, and how many you currently own.';
+      titleEl.innerHTML = '<span class="material-symbols-outlined align-middle text-[32px]">gadget</span> Consumables Archive';
+      body.className = 'mt-6';
+      subEl.textContent = 'Single-use items. Maximum impact when the stakes are highest.';
       const inv = (runState && runState.inventory) || {};
-      // Render in a stable order (catalog key order).
+      const grid = _buildCatalogSection(body, 'Consumables', 'text-secondary');
       for (const id of Object.keys(CONSUMABLE_INFO)) {
         const c = CONSUMABLE_INFO[id];
         const count = inv[id] || 0;
         const owned = count > 0;
-        const row = document.createElement('div');
-        row.className = 'rounded-lg p-3 border ' + (owned
-          ? 'bg-amber-900/40 border-amber-400'
-          : 'bg-black/30 border-white/10');
-        // Look up shop price if present.
         const shopItem = SHOP_ITEMS.find(s => s.id === id);
         const price = shopItem ? shopItem.price : null;
-        row.innerHTML =
-          '<div class="flex items-baseline gap-2 mb-1">' +
-            '<span class="font-bold">' + escapeHtml(c.name) + '</span>' +
-            (owned ? '<span class="text-[10px] uppercase tracking-widest font-bold px-1.5 rounded bg-amber-500 text-black">Owned ' + count + '</span>' : '') +
-            (price !== null ? '<span class="ml-auto text-xs text-yellow-300">' + price + 'g</span>' : '') +
-          '</div>' +
-          '<div class="text-xs text-emerald-100">' + escapeHtml(c.desc) + '</div>';
-        body.appendChild(row);
+        const eyebrow = owned ? ('Owned x' + count) : 'Available';
+        const eyebrowTone = owned ? 'text-amber-400' : 'text-secondary';
+        const card = _buildStitchCard({
+          eyebrow: eyebrow,
+          eyebrowTone: eyebrowTone,
+          badges: owned
+            ? '<span class="font-eyebrow-label text-[9px] font-black uppercase tracking-[0.2em] px-2 py-0.5 rounded bg-amber-400/30 text-amber-200 border border-amber-400/40">In bag</span>'
+            : '',
+          iconHtml: '<span class="material-symbols-outlined text-[48px] text-primary">' + (owned ? 'inventory_2' : 'shopping_bag') + '</span>',
+          title: c.name,
+          desc: c.desc,
+          footerLeft:  price !== null
+            ? '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] text-on-surface-variant">' + price + 'G</span>'
+            : '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] text-on-surface-variant">\u2014</span>',
+          footerRight: '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] ' + eyebrowTone + '">' + eyebrow + '</span>',
+          highlight: owned ? 'border-amber-400/60 ring-1 ring-amber-400/30' : ''
+        });
+        grid.appendChild(card);
+      }
+    } else if (kind === 'bosses') {
+      titleEl.innerHTML = '<span class="material-symbols-outlined align-middle text-[32px]">skull</span> Bosses';
+      body.className = 'mt-6';
+      subEl.textContent = 'Floor 3, 6, and 9 confrontations. Each one bends the rules of the round.';
+      const ORDER = [
+        { id: 'auditor', floor: 3 },
+        { id: 'cheater', floor: 6 },
+        { id: 'lugen',   floor: 9 },
+        { id: 'mirror',  floor: 9, alt: true },
+        { id: 'hollow',  floor: 9, alt: true },
+      ];
+      const grid = _buildCatalogSection(body, 'Bosses', 'text-error');
+      const FLOOR_GLYPH = { 3: 'looks_3', 6: 'looks_6', 9: 'looks_9' };
+      for (const entry of ORDER) {
+        const b = BOSS_CATALOG[entry.id];
+        if (!b) continue;
+        const tone = b.alt ? 'text-rose-400' : 'text-error';
+        const isCurrent = !!(runState && runState.currentFloor === b.floor && getBoss && getBoss(b.floor) && getBoss(b.floor).id === b.id);
+        const meta = 'Bluff ' + Math.round((b.bluffRate || 0) * 100) + '%  \u00b7  Challenge ' + Math.round((b.challengeRate || 0) * 100) + '%';
+        const tellLine = b.tell ? ('Tell: ' + b.tell) : 'No tell.';
+        const card = _buildStitchCard({
+          eyebrow: 'Floor ' + b.floor + (b.alt ? ' (alt)' : ''),
+          eyebrowTone: tone,
+          badges: isCurrent
+            ? '<span class="font-eyebrow-label text-[9px] font-black uppercase tracking-[0.2em] px-2 py-0.5 rounded bg-rose-500/30 text-rose-200 border border-rose-400/40">Current</span>'
+            : '',
+          iconHtml: '<span class="material-symbols-outlined text-[48px] text-error drop-shadow-[0_0_15px_rgba(255,180,171,0.4)]">' + (FLOOR_GLYPH[b.floor] || 'skull') + '</span>',
+          title: b.name,
+          desc: b.desc + ' ' + tellLine,
+          footerLeft:  '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] text-on-surface-variant">' + meta + '</span>',
+          footerRight: '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] ' + tone + '">' + (b.alt ? 'ALT' : 'BOSS') + '</span>',
+          highlight: isCurrent ? 'border-rose-400/60 ring-1 ring-rose-400/30' : ''
+        });
+        grid.appendChild(card);
+      }
+    } else if (kind === 'floorMods') {
+      titleEl.innerHTML = '<span class="material-symbols-outlined align-middle text-[32px]">filter_drama</span> Floor Modifiers';
+      body.className = 'mt-6';
+      const ids = Object.keys(FLOOR_MODIFIERS);
+      subEl.textContent = 'Per-floor rule changes that apply to the round you\'re currently sitting at.';
+      const current = (runState && runState.currentFloorModifier) || null;
+      const grid = _buildCatalogSection(body, 'Modifiers (' + ids.length + ')', 'text-tertiary');
+      for (const id of ids) {
+        const m = FLOOR_MODIFIERS[id];
+        if (!m) continue;
+        const isActive = current === id;
+        const card = _buildStitchCard({
+          eyebrow: 'Modifier',
+          eyebrowTone: 'text-tertiary',
+          badges: isActive
+            ? '<span class="font-eyebrow-label text-[9px] font-black uppercase tracking-[0.2em] px-2 py-0.5 rounded bg-tertiary-container/30 text-tertiary border border-tertiary/40">Active</span>'
+            : '',
+          iconHtml: '<span class="material-symbols-outlined text-[48px] text-tertiary drop-shadow-[0_0_15px_rgba(96,197,255,0.3)]">filter_drama</span>',
+          title: m.name,
+          desc: m.desc,
+          footerLeft:  '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] text-on-surface-variant">FLOOR RULE</span>',
+          footerRight: '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] text-tertiary">MOD</span>',
+          highlight: isActive ? 'border-tertiary/60 ring-1 ring-tertiary/30' : ''
+        });
+        grid.appendChild(card);
+      }
+    } else if (kind === 'bots') {
+      titleEl.innerHTML = '<span class="material-symbols-outlined align-middle text-[32px]">smart_toy</span> Bot Behaviour';
+      body.className = 'mt-6';
+      const ids = Object.keys(PERSONALITY_CATALOG);
+      subEl.textContent = 'Every opponent personality you can sit across from. Bluff and challenge rates plus the tell to read.';
+      // Find which personalities are at this run's table (current 3 bots).
+      const seated = new Set();
+      if (runState && Array.isArray(runState.botPersonalities)) {
+        for (const p of runState.botPersonalities) if (p && p.id) seated.add(p.id);
+      }
+      const grid = _buildCatalogSection(body, 'Personalities (' + ids.length + ')', 'text-secondary');
+      for (const id of ids) {
+        const p = PERSONALITY_CATALOG[id];
+        if (!p) continue;
+        const isSeated = seated.has(id);
+        const tellLine = p.tell ? ('Tell: ' + p.tell) : 'No visible tell.';
+        const meta = 'Bluff ' + Math.round((p.bluffRate || 0) * 100) + '%  \u00b7  Challenge ' + Math.round((p.challengeRate || 0) * 100) + '%';
+        const card = _buildStitchCard({
+          eyebrow: 'Personality',
+          eyebrowTone: 'text-secondary',
+          badges: isSeated
+            ? '<span class="font-eyebrow-label text-[9px] font-black uppercase tracking-[0.2em] px-2 py-0.5 rounded bg-emerald-500/30 text-emerald-200 border border-emerald-400/40">At Table</span>'
+            : '',
+          iconHtml: '<span class="material-symbols-outlined text-[48px] text-secondary drop-shadow-[0_0_15px_rgba(139,215,155,0.3)]">smart_toy</span>',
+          title: p.name,
+          desc: tellLine,
+          footerLeft:  '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] text-on-surface-variant">' + meta + '</span>',
+          footerRight: '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.16em] text-secondary">BOT</span>',
+          highlight: isSeated ? 'border-emerald-400/60 ring-1 ring-emerald-400/30' : ''
+        });
+        grid.appendChild(card);
       }
     } else if (kind === 'achievements') {
-      titleEl.textContent = '\ud83c\udfc6 Achievements';
+      titleEl.innerHTML = '<span class="material-symbols-outlined align-middle text-[32px]">emoji_events</span> Vault of Records';
+      body.className = 'mt-6';
       const unlocked = _achGetUnlocked();
       const progress = _achGetProgress();
       const total = Object.keys(ACHIEVEMENT_CATALOG).length;
-      subEl.textContent = unlocked.length + ' / ' + total + ' unlocked. Progress is saved across runs.';
-      // Group by category in a stable order.
+      const got = unlocked.length;
+      const pct = total > 0 ? Math.round(100 * got / total) : 0;
+      subEl.textContent = 'Every hand played leaves a mark. Track your milestones and prove your worth against the house.';
+
+      // Completion header strip
+      const headerStrip = document.createElement('div');
+      headerStrip.className = 'mb-8 flex flex-col md:flex-row md:items-end justify-end gap-4';
+      headerStrip.innerHTML =
+        '<div class="bg-surface-container/80 backdrop-blur-md border border-outline-variant rounded-xl px-4 py-3 flex items-center gap-4 ml-auto">' +
+          '<div class="flex flex-col">' +
+            '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant">Total Completion</span>' +
+            '<span class="font-button-text text-button-text text-on-surface">' + got + ' / ' + total + '</span>' +
+          '</div>' +
+          '<div class="w-32 h-2 bg-surface-container-highest rounded-full overflow-hidden">' +
+            '<div class="bg-primary-container h-full" style="width: ' + pct + '%"></div>' +
+          '</div>' +
+        '</div>';
+      body.appendChild(headerStrip);
+
       const ORDER = ['Mastery', 'Build', 'Economy', 'Run-defining'];
       const PRETTY = { Mastery: 'Mastery', Build: 'Build identity', Economy: 'Economy / fluff', 'Run-defining': 'Run-defining' };
+      const CAT_TONE = {
+        Mastery:        'text-primary-container',
+        Build:          'text-secondary',
+        Economy:        'text-tertiary',
+        'Run-defining': 'text-error',
+      };
+      const CAT_ICON = {
+        Mastery:        'military_tech',
+        Build:          'diamond',
+        Economy:        'stacked_bar_chart',
+        'Run-defining': 'casino',
+      };
       const byCat = {};
       for (const id of Object.keys(ACHIEVEMENT_CATALOG)) {
         const a = ACHIEVEMENT_CATALOG[id];
         (byCat[a.cat] = byCat[a.cat] || []).push(a);
       }
-      // Inline progress hints — best-effort; show what we can compute.
+
+      // Inline progress hints
       function _progressHint(id) {
         const ach = (runState && runState.ach) || {};
         switch (id) {
@@ -7460,53 +7850,133 @@
           case 'jokersWild':   return (ach.jokersEverEquipped || 0) + ' / 5 (this run)';
           case 'spendthrift':  return (ach.spent || 0) + ' / 2000g (this run)';
           case 'wallet':       return ((runState && runState.gold) || 0) + ' / 1000g (current)';
-          case 'pacifist':     return (ach.liarCalls || 0) === 0 ? 'still eligible (no Liar calls)' : 'broken — already called Liar';
-          case 'stoic':        return (ach.consumableUses || 0) === 0 ? 'still eligible (no consumables used)' : 'broken — already used a consumable';
+          case 'pacifist':     return (ach.liarCalls || 0) === 0 ? 'still eligible (no Liar calls)' : 'broken (already called Liar)';
+          case 'stoic':        return (ach.consumableUses || 0) === 0 ? 'still eligible (no consumables used)' : 'broken (already used a consumable)';
           case 'ironWill':     return runState && runState.runDeck
             ? runState.runDeck.filter(c => c.affix === 'steel').length + ' / 4 Steel cards in deck'
-            : '\u2014';
+            : null;
           case 'strippedDown': return runState && runState.runDeck
             ? runState.runDeck.length + ' cards in deck (need <= 4 at run win)'
-            : '\u2014';
+            : null;
           case 'affixConn': {
-            if (!runState || !runState.runDeck) return '\u2014';
+            if (!runState || !runState.runDeck) return null;
             const present = new Set(runState.runDeck.filter(c => c.affix).map(c => c.affix));
             return present.size + ' / 8 affixes present in deck';
           }
           default: return null;
         }
       }
+
+      // Try to parse "n / m" out of a hint string for a numeric progress bar.
+      function _parseProgress(hint) {
+        if (!hint || typeof hint !== 'string') return null;
+        const m = hint.match(/(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/);
+        if (!m) return null;
+        const num = parseFloat(m[1].replace(',', ''));
+        const den = parseFloat(m[2].replace(',', ''));
+        if (!isFinite(num) || !isFinite(den) || den <= 0) return null;
+        return { num: num, den: den, pct: Math.max(0, Math.min(100, 100 * num / den)) };
+      }
+
       for (const cat of ORDER) {
         const arr = byCat[cat];
         if (!arr || arr.length === 0) continue;
-        const header = document.createElement('div');
-        header.className = 'text-xs uppercase tracking-widest font-bold mt-2 mb-1 text-yellow-300';
-        const got = arr.filter(a => unlocked.includes(a.id)).length;
-        header.textContent = (PRETTY[cat] || cat) + ' (' + got + ' / ' + arr.length + ')';
-        body.appendChild(header);
+        const catGot = arr.filter(a => unlocked.includes(a.id)).length;
+        const tone = CAT_TONE[cat] || 'text-on-surface-variant';
+        const icon = CAT_ICON[cat] || 'star';
+        const wrap = document.createElement('section');
+        wrap.className = 'mb-8';
+        const h = document.createElement('h2');
+        h.className = 'font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] mb-3 ' + tone;
+        h.textContent = (PRETTY[cat] || cat) + ' (' + catGot + ' / ' + arr.length + ')';
+        wrap.appendChild(h);
+        const grid = document.createElement('div');
+        grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
+        wrap.appendChild(grid);
+        body.appendChild(wrap);
+
         for (const a of arr) {
           const isUnlocked = unlocked.includes(a.id);
-          const row = document.createElement('div');
-          row.className = 'rounded-lg p-3 border ' + (isUnlocked
-            ? 'bg-yellow-900/40 border-yellow-400'
-            : 'bg-black/30 border-white/10');
           const hint = _progressHint(a.id);
-          row.innerHTML =
-            '<div class="flex items-baseline gap-2 mb-1">' +
-              '<span class="font-bold">' + (isUnlocked ? '\ud83c\udfc6 ' : '\ud83d\udd12 ') + escapeHtml(a.name) + '</span>' +
+          const parsed = _parseProgress(hint);
+          const isProgress = !isUnlocked && parsed && parsed.num > 0;
+          const isNotStarted = !isUnlocked && !isProgress;
+
+          const card = document.createElement('div');
+          card.className = 'bg-surface-container/60 backdrop-blur-md border rounded-xl p-5 relative overflow-hidden group transition-colors flex flex-col gap-3 ' +
+            (isUnlocked
+              ? 'border-primary-container/50 hover:border-primary-container'
+              : (isNotStarted
+                ? 'border-surface-container-highest opacity-75 hover:bg-surface-container/80'
+                : 'border-outline-variant hover:border-outline'));
+
+          // Top: category eyebrow + check_circle if unlocked
+          const top =
+            '<div class="flex justify-between items-start">' +
+              '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] ' + tone + '">' + escapeHtml(cat) + '</span>' +
               (isUnlocked
-                ? '<span class="text-[10px] uppercase tracking-widest font-bold px-1.5 rounded bg-yellow-400 text-black">Unlocked</span>'
-                : '<span class="text-[10px] uppercase tracking-widest font-bold px-1.5 rounded bg-white/10 text-white/60">Locked</span>') +
-            '</div>' +
-            '<div class="text-xs text-emerald-100">' + escapeHtml(a.desc) + '</div>' +
-            (hint
-              ? '<div class="text-[10px] text-emerald-300 mt-1">Progress: ' + escapeHtml(String(hint)) + '</div>'
-              : '') +
-            '<div class="text-[10px] italic text-white/60 mt-1">Unlocks: ' + escapeHtml(a.unlocks || '\u2014') + '</div>';
-          body.appendChild(row);
+                ? '<span class="material-symbols-outlined text-primary-container text-lg icon-fill">check_circle</span>'
+                : '') +
+            '</div>';
+
+          // Middle: small circular icon well + name
+          const middle =
+            '<div class="flex items-center gap-3">' +
+              '<div class="w-10 h-10 rounded-full ' + (isUnlocked ? 'bg-surface-container-highest text-on-surface' : 'bg-surface-container-lowest text-on-surface-variant') + ' flex items-center justify-center border border-outline-variant shrink-0">' +
+                '<span class="material-symbols-outlined">' + icon + '</span>' +
+              '</div>' +
+              '<h3 class="font-button-text text-button-text ' + (isUnlocked ? 'text-on-surface' : 'text-on-surface-variant') + '">' + escapeHtml(a.name) + '</h3>' +
+            '</div>';
+
+          // Description
+          const desc =
+            '<p class="font-body-standard text-sm text-on-surface-variant leading-relaxed flex-grow">' + escapeHtml(a.desc) + '</p>';
+
+          // Footer: state-dependent
+          let footer = '';
+          if (isUnlocked) {
+            footer =
+              '<div class="mt-auto">' +
+                '<div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-primary-container/10 border border-primary-container/20">' +
+                  '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-primary-container">Completed</span>' +
+                '</div>' +
+              '</div>';
+          } else if (isProgress) {
+            const pctText = parsed.num + ' / ' + parsed.den;
+            footer =
+              '<div class="mt-auto">' +
+                '<div class="flex justify-between items-end mb-1">' +
+                  '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant">Progress</span>' +
+                  '<span class="font-button-text text-xs text-on-surface">' + pctText + '</span>' +
+                '</div>' +
+                '<div class="w-full h-1.5 bg-surface-container-highest rounded-full overflow-hidden">' +
+                  '<div class="bg-primary-container h-full" style="width: ' + parsed.pct + '%"></div>' +
+                '</div>' +
+              '</div>';
+          } else {
+            // Not started, or hint without a parseable ratio.
+            footer =
+              '<div class="mt-auto">' +
+                '<div class="flex justify-between items-end mb-1">' +
+                  '<span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant">' + (hint ? 'Status' : 'Not started') + '</span>' +
+                  '<span class="font-button-text text-xs text-on-surface-variant">' + escapeHtml(hint || '0 / 1') + '</span>' +
+                '</div>' +
+                '<div class="w-full h-1.5 bg-surface-container-lowest rounded-full overflow-hidden border border-surface-container-highest">' +
+                  '<div class="bg-surface-variant h-full" style="width: 0%"></div>' +
+                '</div>' +
+              '</div>';
+          }
+
+          // Optional unlocks line (kept small; visible on all states for context)
+          const unlocksLine = a.unlocks
+            ? '<div class="text-[10px] italic text-on-surface-variant/60">Unlocks: ' + escapeHtml(a.unlocks) + '</div>'
+            : '';
+
+          card.innerHTML = top + middle + desc + unlocksLine + footer;
+          grid.appendChild(card);
         }
       }
-    }
+        }
     modal.classList.remove('hidden');
   }
   function _relicRow(r, ownedFlag) {
@@ -7540,6 +8010,12 @@
   if (_catCons) _catCons.addEventListener('click', () => _openCatalog('consumables'));
   const _catAch = document.getElementById('betaCatalogAchievementsBtn');
   if (_catAch) _catAch.addEventListener('click', () => _openCatalog('achievements'));
+  const _catBosses = document.getElementById('betaCatalogBossesBtn');
+  if (_catBosses) _catBosses.addEventListener('click', () => _openCatalog('bosses'));
+  const _catFloorMods = document.getElementById('betaCatalogFloorModsBtn');
+  if (_catFloorMods) _catFloorMods.addEventListener('click', () => _openCatalog('floorMods'));
+  const _catBots = document.getElementById('betaCatalogBotsBtn');
+  if (_catBots) _catBots.addEventListener('click', () => _openCatalog('bots'));
 
   // Expose the catalog modal globally so the PvP UI (beta-mp.js / inline
   // markup with data-mp-catalog) can open it without re-implementing the
@@ -7558,7 +8034,6 @@
     // per floor; sets state.screamerRevealedRank for the rest of this round.
     window.lugenUseScreamer = (rank) => useScreamer((rank || '').toUpperCase());
     // Debug helper: open the info modal for joker slot N (0-indexed). Useful
-    // if the in-game click fails for any reason — call lugenInspectJoker(0).
     window.lugenInspectJoker = (idx) => _openJokerSlotModal(idx | 0);
     // Shared info modal — exposed so beta-mp.js (a separate IIFE) can
     // reuse the existing #betaInfoModal infrastructure for joker tooltips

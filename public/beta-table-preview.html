@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Jacks Gambit — Beta Preview</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&amp;family=Space+Grotesk:wght@400;500;700;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        colors: {
+          "background": "#081425",
+          "on-primary-fixed-variant": "#5a4300",
+          "inverse-on-surface": "#263143",
+          "on-surface": "#d8e3fb",
+          "on-tertiary-fixed-variant": "#004c6c",
+          "secondary-container": "#005829",
+          "primary-container": "#eab308",
+          "on-primary-container": "#604700",
+          "surface-variant": "#2a3548",
+          "surface-container-high": "#1f2a3c",
+          "error-container": "#93000a",
+          "surface": "#081425",
+          "surface-container-lowest": "#040e1f",
+          "tertiary-fixed-dim": "#83cfff",
+          "on-tertiary": "#00344c",
+          "surface-tint": "#f7be1d",
+          "on-primary": "#3f2e00",
+          "on-background": "#d8e3fb",
+          "secondary-fixed-dim": "#8bd79b",
+          "on-tertiary-fixed": "#001e2e",
+          "on-error-container": "#ffdad6",
+          "surface-dim": "#081425",
+          "inverse-primary": "#785a00",
+          "tertiary-container": "#60c5ff",
+          "inverse-surface": "#d8e3fb",
+          "tertiary-fixed": "#c7e7ff",
+          "on-surface-variant": "#d3c5ac",
+          "on-secondary-fixed-variant": "#005226",
+          "secondary-fixed": "#a6f4b5",
+          "surface-bright": "#2f3a4c",
+          "surface-container-highest": "#2a3548",
+          "primary": "#ffd165",
+          "outline-variant": "#4f4633",
+          "on-secondary": "#003918",
+          "on-error": "#690005",
+          "error": "#ffb4ab",
+          "on-tertiary-container": "#005072",
+          "tertiary": "#adddff",
+          "primary-fixed": "#ffdf9a",
+          "on-primary-fixed": "#251a00",
+          "on-secondary-fixed": "#00210b",
+          "surface-container": "#152031",
+          "primary-fixed-dim": "#f7be1d",
+          "on-secondary-container": "#81cc90",
+          "surface-container-low": "#111c2d",
+          "outline": "#9b8f79",
+          "secondary": "#8bd79b"
+        },
+        borderRadius: {
+          "DEFAULT": "0.125rem",
+          "lg": "0.25rem",
+          "xl": "0.5rem",
+          "full": "0.75rem"
+        },
+        spacing: {
+          "card-lift": "14px",
+          "ring-weight": "2px",
+          "ring-weight-active": "3px",
+          "container-padding": "1.25rem",
+          "card-width": "64px",
+          "card-height": "90px",
+          "panel-gap": "1rem"
+        },
+        fontFamily: {
+          "pressure-rank": ["Space Grotesk"],
+          "body-standard": ["Inter"],
+          "eyebrow-label": ["Inter"],
+          "button-text": ["Space Grotesk"],
+          "display": ["Space Grotesk"],
+          "body": ["Inter"]
+        },
+        fontSize: {
+          "pressure-rank": ["24px", { "lineHeight": "1", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+          "body-standard": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+          "eyebrow-label": ["10px", { "lineHeight": "12px", "letterSpacing": "0.16em", "fontWeight": "700" }],
+          "button-text": ["14px", { "lineHeight": "1", "fontWeight": "700" }]
+        }
+      }
+    }
+  }
+</script>
+<style>
+  .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+  .icon-fill { font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+
+  /* Unified felt background, used on body so every view shares it */
+  body.emerald-felt {
+    background-color: #004d23;
+    background-image: radial-gradient(circle at center, rgba(0,0,0,0) 0%, rgba(0,0,0,0.6) 100%);
+  }
+  /* Smaller felt token for inset elements (hub icon wells, etc.) */
+  .emerald-felt-inset {
+    background-color: #004d23;
+    background-image: radial-gradient(circle at center, rgba(0,0,0,0) 0%, rgba(0,0,0,0.6) 100%);
+  }
+  .slate-glass {
+    background-color: rgba(30, 41, 59, 0.7);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(155, 143, 121, 0.3);
+  }
+  .card-tile { transition: transform 0ms; }
+  .card-tile:hover {
+    transform: translateY(-14px);
+    box-shadow: 0 0 0 3px #eab308;
+    z-index: 20;
+  }
+  .glass-card { transition: all 0.3s ease; }
+  .glass-card:hover {
+    transform: translateY(-14px);
+    border-color: #facc15;
+    box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5), 0 8px 10px -6px rgba(0,0,0,0.1);
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  /* Card-back diagonal stripes for the central pile */
+  .bg-stripes {
+    background-color: #1e3a8a;
+    background-image: repeating-linear-gradient(
+      45deg,
+      rgba(255,255,255,0.18) 0,
+      rgba(255,255,255,0.18) 2px,
+      transparent 2px,
+      transparent 6px
+    );
+  }
+  /* View routing — only one .view is visible at a time */
+  .view { display: none; }
+  .view.active { display: flex; }
+  /* Nav active state */
+  .nav-link.active {
+    color: #eab308;
+    border-bottom: 2px solid #eab308;
+  }
+  /* Mask-based icon: takes its color from currentColor (i.e. the parent's text color).
+     Source PNG must be a transparent-background silhouette. */
+  .icon-mask {
+    display: inline-block;
+    background-color: currentColor;
+    mask-position: center;
+    mask-repeat: no-repeat;
+    mask-size: contain;
+    -webkit-mask-position: center;
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-size: contain;
+  }
+  .icon-mask--consumables {
+    mask-image: url('/assets/icon-consumables.png');
+    -webkit-mask-image: url('/assets/icon-consumables.png');
+  }
+  .icon-mask--jokers {
+    mask-image: url('/assets/icon-jokers.png');
+    -webkit-mask-image: url('/assets/icon-jokers.png');
+  }
+</style>
+</head>
+<body class="emerald-felt bg-background text-on-surface font-body-standard text-body-standard min-h-screen flex flex-col select-none">
+
+<!-- ============================================================
+     TOP APP BAR (shared across all views)
+     ============================================================ -->
+<header class="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-6 h-16 bg-slate-900/80 backdrop-blur-md border-b border-slate-700/50 font-['Space_Grotesk'] tracking-tight">
+  <a href="#table" data-view="table" class="flex items-center h-full active:scale-95 transition-transform duration-100" title="Jacks Gambit — Home">
+    <img src="/assets/jacks-gambit-logo.png" alt="Jacks Gambit" class="h-12 w-auto drop-shadow-[0_0_12px_rgba(168,85,247,0.35)]" />
+  </a>
+
+  <nav class="hidden md:flex gap-8 h-full">
+    <a class="nav-link active flex items-center h-full text-slate-400 font-medium pb-1 active:scale-95 transition-transform duration-100 hover:text-yellow-400" href="#" data-view="table">Table</a>
+    <a class="nav-link flex items-center h-full text-slate-400 font-medium pb-1 active:scale-95 transition-transform duration-100 hover:text-yellow-400" href="#" data-view="legend">Legend</a>
+    <a class="nav-link flex items-center h-full text-slate-400 font-medium pb-1 active:scale-95 transition-transform duration-100 hover:text-yellow-400" href="#" data-view="achievements">Achievements</a>
+    <a class="nav-link flex items-center h-full text-slate-400 font-medium pb-1 active:scale-95 transition-transform duration-100 hover:text-yellow-400" href="#" data-view="cards">Cards</a>
+  </nav>
+
+  <div class="flex items-center gap-4 group relative cursor-pointer active:scale-95 transition-transform duration-100">
+    <span class="material-symbols-outlined text-slate-400 hover:text-yellow-400 transition-colors duration-150">settings</span>
+    <div class="absolute right-0 top-10 w-40 slate-glass rounded-lg hidden group-hover:flex flex-col py-2 z-50">
+      <div class="px-4 py-2 text-error hover:bg-white/5 cursor-pointer text-sm font-button-text">Leave Match</div>
+    </div>
+  </div>
+</header>
+
+<!-- ============================================================
+     VIEW: TABLE  (the live game board)
+     ============================================================ -->
+<main id="view-table" class="view active flex-1 mt-16 relative flex-col p-6 isolate">
+  <!-- TOP AREA: Opponent Tiles -->
+  <section class="flex justify-center gap-8 mb-8 z-10">
+    <!-- Opponent 1 -->
+    <div class="slate-glass rounded-xl px-4 py-2 flex items-center gap-4 w-48 shadow-lg">
+      <div class="w-10 h-10 rounded-full bg-surface-bright bg-cover bg-center border border-outline/50" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuD4aSMol33S7vDFsKFCz01c_xBZOIb8Kzqfxr847Zddl_jS9tKyO_qUe6-KL2KjQZz4_FmtL8xAM1Qv3tuEYmp49zXwqZjE8CQ7MPoWW2bN9dV0Kl9fS6K16-HU_LtUQA3XFeIWUqV_nJlPqoBmIud9s-nCIprqaExbjUeaRNb645c4oXqfH_Je04v7CRaLN0dlNM4IcsZExQol9cno7NHo9HzEgaf6r10r80qeTLIN6BHNYZp3yArv9V5-vFhi556gArG1oHTmhZY')"></div>
+      <div class="flex-1 min-w-0">
+        <div class="font-button-text text-button-text text-on-surface truncate">Viper</div>
+        <div class="text-xs text-on-surface-variant flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">style</span> 4</div>
+      </div>
+    </div>
+    <!-- Opponent 2 (Active) -->
+    <div class="slate-glass rounded-xl px-4 py-2 flex items-center gap-4 w-48 shadow-[0_0_15px_rgba(234,179,8,0.2)] ring-ring-weight-active ring-primary relative overflow-hidden">
+      <div class="absolute inset-0 bg-primary/5 animate-pulse"></div>
+      <div class="w-10 h-10 rounded-full bg-surface-bright bg-cover bg-center border border-outline/50 relative z-10" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuB5T_d_gpuzaT9l-s6yNLib-CMmKfAsIz14v6AtMvEMmfORiY3e5bE3_8a2wY4XsbRR2mUr0SrPx-nVU_RNVU9hy-Gz18vmJ1x73o_bIbZc_qvSzBQUDzQ_pX0EigyKAMpNN-hGAR4-21VHorksdtHAsgWgkL1pQ9ai6n-oCyLv94t8aZ9nwOPy6q4NQzmxKwC9p83ByqYYaZSPEgEQgsN_TTVFm0LUWAOPDEyXPqApNHjmeGz4Ve3JaJzNwOGyKXll6m9_JE8Ws88')"></div>
+      <div class="flex-1 min-w-0 relative z-10">
+        <div class="font-button-text text-button-text text-primary truncate">Ghost</div>
+        <div class="text-xs text-on-surface-variant flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">style</span> 6</div>
+      </div>
+    </div>
+    <!-- Opponent 3 (Boss) -->
+    <div class="bg-[#2e1065]/80 backdrop-blur-md border border-[#a855f7]/50 rounded-xl px-4 py-2 flex items-center gap-4 w-48 shadow-lg">
+      <div class="w-10 h-10 rounded-full bg-black bg-cover bg-center border border-[#a855f7]" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuBqQMBhPUEWCMHzhBJUM734mHEbDKGNtxaYXelsXFBY1uRhtox8ZuwTVnStz97oLyQtoxT61OzdT4oXSkOGCvLrZtw33JUXxWNbGqMbbJ7HRDVoVYXo0V5EFG4vmhgVKMh6kFi9s3VfosTQTrO1oGmPLuoZgHMknL32gGGf7GY4nHmJCzSjt2bDCo8_M8G9-1aHhYBRjalji9KaGJzu6ClgEWLCe1SSgQMtZhraoPmLPAVeTr9CVUm5eXv3UnfzMRFCkmbug_UWv9s')"></div>
+      <div class="flex-1 min-w-0">
+        <div class="font-button-text text-button-text text-[#c084fc] truncate">Dealer</div>
+        <div class="text-xs text-[#d8b4fe] flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">style</span> 2</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MIDDLE AREA -->
+  <section class="flex-1 flex justify-between items-stretch gap-8 w-full max-w-7xl mx-auto z-10 relative">
+    <!-- LEFT: Jokers -->
+    <aside class="w-32 md:w-40 flex flex-col gap-4">
+      <div class="font-eyebrow-label text-eyebrow-label text-on-surface-variant uppercase tracking-widest text-center">Jokers</div>
+      <div class="slate-glass rounded-xl flex-1 p-3 flex flex-col items-center gap-4 overflow-y-auto">
+        <div class="w-full bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded p-2 flex items-center gap-2">
+          <div class="w-8 h-8 shrink-0 rounded-full bg-blue-900 border-2 border-blue-400 flex items-center justify-center shadow-inner"><span class="material-symbols-outlined text-sm text-blue-200 icon-fill">diamond</span></div>
+          <div class="flex flex-col min-w-0"><span class="font-button-text text-[10px] text-blue-200 truncate">Prism</span><span class="text-[8px] text-blue-400 uppercase">Rare</span></div>
+        </div>
+        <div class="w-full bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded p-2 flex items-center gap-2">
+          <div class="w-8 h-8 shrink-0 rounded-full bg-emerald-900 border-2 border-emerald-400 flex items-center justify-center shadow-inner"><span class="material-symbols-outlined text-sm text-emerald-200 icon-fill">change_history</span></div>
+          <div class="flex flex-col min-w-0"><span class="font-button-text text-[10px] text-emerald-200 truncate">Blank</span><span class="text-[8px] text-emerald-400 uppercase">Uncommon</span></div>
+        </div>
+        <div class="w-full bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded p-2 flex items-center gap-2">
+          <div class="w-8 h-8 shrink-0 rounded-full bg-slate-700 border-2 border-slate-400 flex items-center justify-center shadow-inner"><span class="material-symbols-outlined text-sm text-slate-300">circle</span></div>
+          <div class="flex flex-col min-w-0"><span class="font-button-text text-[10px] text-slate-200 truncate">Void</span><span class="text-[8px] text-slate-400 uppercase">Common</span></div>
+        </div>
+        <div class="w-full bg-slate-900/40 border border-slate-800 border-dashed rounded p-2 flex items-center justify-center h-[42px]"><span class="material-symbols-outlined text-slate-600 text-sm">add</span></div>
+        <div class="w-full bg-slate-900/40 border border-slate-800 border-dashed rounded p-2 flex items-center justify-center h-[42px]"><span class="material-symbols-outlined text-slate-600 text-sm">add</span></div>
+      </div>
+    </aside>
+
+    <!-- CENTER: Pile -->
+    <div class="flex-1 flex flex-col items-center justify-center relative">
+      <div class="absolute top-0 flex flex-col items-center gap-3">
+        <div class="bg-primary-container text-on-primary-container font-button-text text-button-text px-6 py-1.5 rounded-full uppercase tracking-wider shadow-lg">Your Turn</div>
+        <div class="w-48 h-[8px] bg-surface-container-high rounded-full overflow-hidden border border-outline-variant/30">
+          <div class="h-full bg-error w-1/3 rounded-full"></div>
+        </div>
+      </div>
+      <div class="relative w-32 h-32 flex items-center justify-center mt-12">
+        <div class="absolute w-[64px] h-[90px] bg-stripes border-2 border-white/80 rounded shadow-md transform -rotate-12 -translate-x-4"></div>
+        <div class="absolute w-[64px] h-[90px] bg-stripes border-2 border-white/90 rounded shadow-md transform rotate-6 translate-x-2"></div>
+        <div class="absolute w-[64px] h-[90px] bg-stripes border-2 border-white rounded shadow-lg transform -rotate-3 -translate-y-2"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Consumables / Relics -->
+    <aside class="w-32 md:w-48 flex flex-col gap-6">
+      <div class="flex flex-col gap-2 flex-1">
+        <div class="font-eyebrow-label text-eyebrow-label text-on-surface-variant uppercase tracking-widest text-center">Consumables</div>
+        <div class="slate-glass rounded-xl flex-1 p-3 flex justify-center flex-wrap gap-2 content-start">
+          <div class="w-10 h-10 rounded bg-surface-bright border border-outline-variant flex items-center justify-center cursor-pointer hover:border-primary"><span class="material-symbols-outlined text-primary text-[20px]">local_cafe</span></div>
+        </div>
+      </div>
+      <div class="flex flex-col gap-2 flex-1">
+        <div class="font-eyebrow-label text-eyebrow-label text-on-surface-variant uppercase tracking-widest text-center">Relics</div>
+        <div class="slate-glass rounded-xl flex-1 p-3 flex flex-col gap-2">
+          <div class="flex items-center gap-3 bg-surface-container/50 p-2 rounded border border-outline-variant/30">
+            <span class="material-symbols-outlined text-secondary text-[20px]">key</span>
+            <span class="text-xs text-on-surface truncate">Skeleton Key</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <!-- BOTTOM: Hand & Actions -->
+  <section class="mt-auto flex flex-col items-center gap-8 w-full z-20 pb-4">
+    <div class="flex justify-center gap-4">
+      <div class="card-tile w-[64px] h-[90px] bg-white rounded border border-gray-300 shadow-xl flex flex-col p-1.5 font-pressure-rank text-pressure-rank text-error relative"><div class="leading-none">A</div><div class="absolute bottom-1 right-1.5 text-2xl leading-none">&hearts;</div></div>
+      <div class="card-tile w-[64px] h-[90px] bg-white rounded border border-gray-300 shadow-xl flex flex-col p-1.5 font-pressure-rank text-pressure-rank text-surface-container-lowest relative"><div class="leading-none tracking-tighter">10</div><div class="absolute bottom-1 right-1.5 text-2xl leading-none">&spades;</div></div>
+      <div class="card-tile w-[64px] h-[90px] bg-white rounded border border-gray-300 shadow-xl flex flex-col p-1.5 font-pressure-rank text-pressure-rank text-error relative"><div class="leading-none">J</div><div class="absolute bottom-1 right-1.5 text-2xl leading-none">&diams;</div></div>
+      <div class="card-tile w-[64px] h-[90px] bg-white rounded border border-gray-300 shadow-xl flex flex-col p-1.5 font-pressure-rank text-pressure-rank text-surface-container-lowest relative"><div class="leading-none">7</div><div class="absolute bottom-1 right-1.5 text-2xl leading-none">&clubs;</div></div>
+      <div class="card-tile w-[64px] h-[90px] bg-white rounded border border-gray-300 shadow-xl flex flex-col p-1.5 font-pressure-rank text-pressure-rank text-error relative"><div class="leading-none">K</div><div class="absolute bottom-1 right-1.5 text-2xl leading-none">&hearts;</div></div>
+    </div>
+    <div class="flex gap-6 w-full max-w-md px-4">
+      <button class="flex-1 bg-error-container text-on-error-container font-button-text text-button-text py-4 rounded-lg shadow-lg hover:brightness-110 active:scale-95 transition-all flex items-center justify-center gap-2 border border-error/20"><span class="material-symbols-outlined text-[20px]">warning</span>LIAR!</button>
+      <button class="flex-1 bg-secondary text-on-secondary font-button-text text-button-text py-4 rounded-lg shadow-lg hover:brightness-110 active:scale-95 transition-all flex items-center justify-center gap-2 border border-secondary-fixed/20"><span class="material-symbols-outlined text-[20px]">check</span>Pass &amp; Play</button>
+    </div>
+  </section>
+</main>
+
+<!-- ============================================================
+     VIEW: LEGEND HUB
+     ============================================================ -->
+<main id="view-legend" class="view flex-1 mt-16 flex-col container mx-auto px-4 py-12 md:py-24 items-center justify-center relative z-10">
+  <div class="text-center mb-16">
+    <h1 class="text-5xl md:text-7xl font-pressure-rank text-primary mb-4 drop-shadow-lg">THE LEGEND</h1>
+    <p class="text-xl text-on-surface-variant max-w-2xl mx-auto font-body-standard">Consult the archives. Knowledge is the only advantage in the Gambit.</p>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-panel-gap w-full max-w-6xl">
+    <a class="slate-glass glass-card rounded-xl p-6 flex flex-col items-center text-center group relative overflow-hidden cursor-pointer" href="#" data-view="jokers">
+      <div class="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+      <div class="w-16 h-16 rounded-full flex items-center justify-center mb-6 ring-1 ring-outline group-hover:ring-primary transition-all emerald-felt-inset"><span class="icon-mask icon-mask--jokers w-14 h-14 text-on-surface group-hover:text-primary transition-colors"></span></div>
+      <h2 class="font-pressure-rank text-on-surface mb-3 group-hover:text-primary transition-colors">Jokers</h2>
+      <p class="text-on-surface-variant text-sm font-body-standard mb-6 flex-grow">The wildcards of your deck. Discover combinations and synergies to outwit the Lügen.</p>
+      <div class="mt-auto"><span class="font-button-text text-primary flex items-center gap-2 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all">EXPLORE <span class="material-symbols-outlined text-sm">arrow_forward</span></span></div>
+    </a>
+    <a class="slate-glass glass-card rounded-xl p-6 flex flex-col items-center text-center group relative overflow-hidden cursor-pointer" href="#" data-view="affixes">
+      <div class="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+      <div class="w-16 h-16 rounded-full flex items-center justify-center mb-6 ring-1 ring-outline group-hover:ring-primary transition-all emerald-felt-inset"><span class="material-symbols-outlined text-4xl text-on-surface-variant group-hover:text-primary transition-colors">stars</span></div>
+      <h2 class="font-pressure-rank text-on-surface mb-3 group-hover:text-primary transition-colors">Affixes</h2>
+      <p class="text-on-surface-variant text-sm font-body-standard mb-6 flex-grow">Modifiers applied to individual cards. Enhance base values or add destructive new properties.</p>
+      <div class="mt-auto"><span class="font-button-text text-primary flex items-center gap-2 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all">EXPLORE <span class="material-symbols-outlined text-sm">arrow_forward</span></span></div>
+    </a>
+    <a class="slate-glass glass-card rounded-xl p-6 flex flex-col items-center text-center group relative overflow-hidden cursor-pointer" href="#" data-view="relics">
+      <div class="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+      <div class="w-16 h-16 rounded-full flex items-center justify-center mb-6 ring-1 ring-outline group-hover:ring-primary transition-all emerald-felt-inset"><span class="material-symbols-outlined text-4xl text-on-surface-variant group-hover:text-primary transition-colors">diamond</span></div>
+      <h2 class="font-pressure-rank text-on-surface mb-3 group-hover:text-primary transition-colors">Relics</h2>
+      <p class="text-on-surface-variant text-sm font-body-standard mb-6 flex-grow">Ancient artifacts of immense power. Permanent passive effects that alter the fundamental rules of the table.</p>
+      <div class="mt-auto"><span class="font-button-text text-primary flex items-center gap-2 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all">EXPLORE <span class="material-symbols-outlined text-sm">arrow_forward</span></span></div>
+    </a>
+    <a class="slate-glass glass-card rounded-xl p-6 flex flex-col items-center text-center group relative overflow-hidden cursor-pointer" href="#" data-view="consumables">
+      <div class="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+      <div class="w-16 h-16 rounded-full flex items-center justify-center mb-6 ring-1 ring-outline group-hover:ring-primary transition-all emerald-felt-inset"><span class="icon-mask icon-mask--consumables w-14 h-14 text-on-surface group-hover:text-primary transition-colors"></span></div>
+      <h2 class="font-pressure-rank text-on-surface mb-3 group-hover:text-primary transition-colors">Consumables</h2>
+      <p class="text-on-surface-variant text-sm font-body-standard mb-6 flex-grow">Single-use items for critical moments. Potions, tarot readings, and desperate measures.</p>
+      <div class="mt-auto"><span class="font-button-text text-primary flex items-center gap-2 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all">EXPLORE <span class="material-symbols-outlined text-sm">arrow_forward</span></span></div>
+    </a>
+  </div>
+</main>
+
+<!-- ============================================================
+     Reusable archive header pattern (back button + title + search)
+     ============================================================ -->
+
+<!-- VIEW: JOKERS ARCHIVE -->
+<main id="view-jokers" class="view flex-1 mt-16 flex-col p-container-padding pb-32 md:pb-container-padding gap-panel-gap max-w-7xl mx-auto w-full">
+  <div class="flex items-center justify-between mt-8 mb-4">
+    <div>
+      <div class="flex items-center gap-3 mb-2">
+        <button class="text-slate-400 hover:text-yellow-400 transition-colors p-1 rounded-full" data-view="legend" title="Back to Legend"><span class="material-symbols-outlined">arrow_back</span></button>
+        <h1 class="font-display text-4xl font-black text-primary flex items-center gap-3"><span class="icon-mask icon-mask--jokers w-12 h-12 text-primary"></span>Joker Compendium</h1>
+      </div>
+      <p class="font-body text-[16px] text-on-surface-variant max-w-2xl">Discover and review all the Jokers encountered on the felt. Their abilities shift the odds, but mastery requires understanding.</p>
+    </div>
+    <div class="hidden md:flex items-center gap-3">
+      <div class="slate-glass rounded-lg flex items-center px-4 py-2 border border-slate-700/50"><span class="material-symbols-outlined text-outline mr-2 text-[20px]">search</span><input class="bg-transparent border-none p-0 text-on-surface font-body text-[14px] focus:ring-0 w-64 placeholder-outline-variant" placeholder="Search jokers..." type="text"/></div>
+      <button class="slate-glass px-4 py-2 rounded-lg border border-slate-700/50 font-display font-bold text-[14px] text-on-surface hover:border-primary transition-all flex items-center gap-2"><span class="material-symbols-outlined text-[18px]">filter_list</span>Filter</button>
+    </div>
+  </div>
+  <div class="flex flex-wrap gap-4 mb-8">
+    <button class="bg-primary text-on-primary font-display font-bold text-[14px] px-6 py-2 rounded-lg hover:shadow-[0_0_15px_rgba(234,179,8,0.3)] transition-all">All Jokers</button>
+    <button class="slate-glass text-on-surface/70 border border-slate-700/50 font-display font-bold text-[14px] px-6 py-2 rounded-lg hover:text-on-surface hover:border-slate-500 transition-all">Common</button>
+    <button class="slate-glass text-on-surface/70 border border-slate-700/50 font-display font-bold text-[14px] px-6 py-2 rounded-lg hover:text-on-surface hover:border-slate-500 transition-all">Uncommon</button>
+    <button class="slate-glass text-on-surface/70 border border-slate-700/50 font-display font-bold text-[14px] px-6 py-2 rounded-lg hover:text-on-surface hover:border-slate-500 transition-all">Rare</button>
+    <button class="slate-glass text-on-surface/70 border border-slate-700/50 font-display font-bold text-[14px] px-6 py-2 rounded-lg hover:text-on-surface hover:border-slate-500 transition-all">Legendary</button>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-panel-gap">
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all">
+      <div class="flex justify-between items-start"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-blue-400">Common</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="bg-slate-900/50 aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-slate-800"><span class="material-symbols-outlined text-[48px] text-primary">poker_chip</span></div>
+      <div><h3 class="font-display text-lg font-bold text-on-surface mb-1">Stuntman</h3><p class="font-body text-sm text-on-surface-variant leading-relaxed">Gives +300 Chips, but reduces hand size by 2.</p></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all">
+      <div class="flex justify-between items-start"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-purple-400">Uncommon</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="bg-slate-900/50 aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-slate-800"><span class="material-symbols-outlined text-[48px] text-primary">magic_button</span></div>
+      <div><h3 class="font-display text-lg font-bold text-on-surface mb-1">The Duo</h3><p class="font-body text-sm text-on-surface-variant leading-relaxed">X2 Mult if played hand contains a Pair.</p></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all">
+      <div class="flex justify-between items-start"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-red-400">Rare</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="bg-slate-900/50 aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-slate-800"><span class="material-symbols-outlined text-[48px] text-primary">diamond</span></div>
+      <div><h3 class="font-display text-lg font-bold text-on-surface mb-1">Blueprint</h3><p class="font-body text-sm text-on-surface-variant leading-relaxed">Copies the ability of the Joker to the right.</p></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all">
+      <div class="flex justify-between items-start"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-yellow-400">Legendary</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="bg-slate-900/50 aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-slate-800"><span class="material-symbols-outlined text-[48px] text-primary">crown</span></div>
+      <div><h3 class="font-display text-lg font-bold text-on-surface mb-1">Perkeo</h3><p class="font-body text-sm text-on-surface-variant leading-relaxed">Creates a Negative copy of 1 random consumable.</p></div>
+    </div>
+  </div>
+</main>
+
+<!-- VIEW: AFFIXES ARCHIVE -->
+<main id="view-affixes" class="view flex-1 mt-16 flex-col p-container-padding pb-32 md:pb-container-padding gap-panel-gap max-w-7xl mx-auto w-full">
+  <div class="w-full flex justify-between border-b border-outline/30 pb-4 mt-8 mb-4">
+    <div>
+      <div class="flex items-center gap-3 mb-2">
+        <button class="text-slate-400 hover:text-yellow-400 transition-colors p-1 rounded-full" data-view="legend" title="Back to Legend"><span class="material-symbols-outlined">arrow_back</span></button>
+        <h1 class="font-pressure-rank text-pressure-rank text-primary flex items-center"><span class="material-symbols-outlined align-middle mr-2 text-[32px]">stars</span>Affixes Legend</h1>
+      </div>
+      <p class="font-body-standard text-[16px] text-on-surface-variant max-w-2xl">Understand the mechanical alterations bonded to the cards. Hover or select to review detailed effects.</p>
+    </div>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-panel-gap w-full">
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group cursor-pointer hover:border-primary/50 transition-all">
+      <div class="flex justify-between items-start"><span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-primary">ENCHANTMENT</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="bg-slate-900/50 aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-slate-800 relative overflow-hidden"><div class="absolute inset-0 bg-yellow-400/10"></div><span class="font-eyebrow-label text-eyebrow-label text-primary text-center px-1">BONUS CHIPS</span></div>
+      <div><h3 class="font-pressure-rank text-lg font-bold text-on-surface mb-1">Gilded</h3><p class="font-body-standard text-sm text-on-surface-variant leading-relaxed">Earns +2 Chips when played. Retains 50% value if discarded.</p></div>
+      <div class="mt-auto flex justify-between items-center pt-4 border-t border-slate-700/50"><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-primary">BONUS CHIPS</span><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-slate-500">TYPE: PASSIVE</span></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group cursor-pointer hover:border-primary/50 transition-all">
+      <div class="flex justify-between items-start"><span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-tertiary-container">FRAGILE</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="bg-slate-900/50 aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-slate-800 relative overflow-hidden"><div class="absolute inset-0 bg-tertiary/10"></div><span class="font-pressure-rank text-[64px] text-tertiary opacity-70 drop-shadow-[0_0_15px_rgba(96,197,255,0.3)]">K</span></div>
+      <div><h3 class="font-pressure-rank text-lg font-bold text-on-surface mb-1">Glass</h3><p class="font-body-standard text-sm text-on-surface-variant leading-relaxed">Multiplies score by 1.5x. 25% chance to shatter permanently upon play.</p></div>
+      <div class="mt-auto flex justify-between items-center pt-4 border-t border-slate-700/50"><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-tertiary">1.5x MULTI</span><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-slate-500">TYPE: RISK</span></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group cursor-pointer hover:border-primary/50 transition-all">
+      <div class="flex justify-between items-start"><span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-error">OFFENSIVE</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="bg-slate-900/50 aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-slate-800 relative overflow-hidden"><div class="absolute inset-0 bg-error/10"></div><span class="font-pressure-rank text-[64px] text-error drop-shadow-[0_0_15px_rgba(255,180,171,0.4)]">Q</span></div>
+      <div><h3 class="font-pressure-rank text-lg font-bold text-on-surface mb-1">Spiked</h3><p class="font-body-standard text-sm text-on-surface-variant leading-relaxed">Deals 5 direct damage to the Boss blind, but drains 1 HP from player.</p></div>
+      <div class="mt-auto flex justify-between items-center pt-4 border-t border-slate-700/50"><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-error">5 DMG</span><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-slate-500">TYPE: COMBAT</span></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group cursor-pointer hover:border-primary/50 transition-all">
+      <div class="flex justify-between items-start"><span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-purple-400">BANE</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="bg-slate-900/50 aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-slate-800 relative overflow-hidden"><div class="absolute inset-0 bg-purple-500/10"></div><span class="font-pressure-rank text-[64px] text-purple-400 drop-shadow-[0_0_15px_rgba(168,85,247,0.3)]">J</span></div>
+      <div><h3 class="font-pressure-rank text-lg font-bold text-on-surface mb-1">Cursed</h3><p class="font-body-standard text-sm text-on-surface-variant leading-relaxed">Cannot be discarded normally. -50% to base score while in hand.</p></div>
+      <div class="mt-auto flex justify-between items-center pt-4 border-t border-slate-700/50"><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-purple-400">STICKY</span><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-slate-500">TYPE: PENALTY</span></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group cursor-pointer hover:border-primary/50 transition-all">
+      <div class="flex justify-between items-start"><span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">DURABLE</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="bg-slate-900/50 aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-slate-800 relative overflow-hidden"><div class="absolute inset-0 bg-slate-300/10"></div><span class="font-pressure-rank text-[64px] text-slate-300">10</span></div>
+      <div><h3 class="font-pressure-rank text-lg font-bold text-on-surface mb-1">Steel</h3><p class="font-body-standard text-sm text-on-surface-variant leading-relaxed">Grants +1 Multiplier while held in hand. Base value +0.</p></div>
+      <div class="mt-auto flex justify-between items-center pt-4 border-t border-slate-700/50"><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-slate-300">+1 MULTI</span><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-slate-500">TYPE: HELD</span></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group cursor-pointer hover:border-primary/50 transition-all">
+      <div class="flex justify-between items-start"><span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-pink-400">MIMIC</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="bg-slate-900/50 aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-slate-800 relative overflow-hidden"><div class="absolute inset-0 bg-pink-400/10"></div><span class="font-pressure-rank text-[64px] text-pink-400 drop-shadow-[0_0_15px_rgba(244,114,182,0.3)]">9</span></div>
+      <div><h3 class="font-pressure-rank text-lg font-bold text-on-surface mb-1">Mirage</h3><p class="font-body-standard text-sm text-on-surface-variant leading-relaxed">Copies the suit and rank of the highest played card. Exhausts after use.</p></div>
+      <div class="mt-auto flex justify-between items-center pt-4 border-t border-slate-700/50"><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-pink-400">COPYCAT</span><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-slate-500">TYPE: UTILITY</span></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group cursor-pointer hover:border-primary/50 transition-all">
+      <div class="flex justify-between items-start"><span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-surface-bright">VOID</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="bg-slate-900/50 aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-slate-800 border-dashed relative overflow-hidden"><span class="font-pressure-rank text-[64px] text-surface-bright">8</span></div>
+      <div><h3 class="font-pressure-rank text-lg font-bold text-on-surface mb-1">Hollow</h3><p class="font-body-standard text-sm text-on-surface-variant leading-relaxed">Has no intrinsic value. Can trigger 'Empty Hand' synergies.</p></div>
+      <div class="mt-auto flex justify-between items-center pt-4 border-t border-slate-700/50"><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-surface-bright">ZERO VALUE</span><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-slate-500">TYPE: SYNERGY</span></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group cursor-pointer hover:border-primary/50 transition-all">
+      <div class="flex justify-between items-start"><span class="font-eyebrow-label text-[10px] font-black uppercase tracking-[0.2em] text-cyan-400">RESONANCE</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="bg-slate-900/50 aspect-[2/3] w-24 rounded-lg self-center flex items-center justify-center border border-slate-800 relative overflow-hidden"><div class="absolute inset-0 bg-cyan-400/10"></div><span class="font-pressure-rank text-[64px] text-cyan-400 drop-shadow-[0_0_15px_rgba(34,211,238,0.3)]">7</span></div>
+      <div><h3 class="font-pressure-rank text-lg font-bold text-on-surface mb-1">Echo</h3><p class="font-body-standard text-sm text-on-surface-variant leading-relaxed">Re-triggers the effect of the previously played card at 50% effectiveness.</p></div>
+      <div class="mt-auto flex justify-between items-center pt-4 border-t border-slate-700/50"><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-cyan-400">REPLAY</span><span class="font-eyebrow-label text-[10px] uppercase tracking-[0.16em] font-bold text-slate-500">TYPE: COMBO</span></div>
+    </div>
+  </div>
+</main>
+
+<!-- VIEW: RELICS ARCHIVE -->
+<main id="view-relics" class="view flex-1 mt-16 flex-col p-container-padding pb-32 md:pb-container-padding gap-panel-gap max-w-7xl mx-auto w-full">
+  <div class="flex items-center justify-between mt-8 mb-4">
+    <div>
+      <div class="flex items-center gap-3 mb-2">
+        <button class="text-slate-400 hover:text-yellow-400 transition-colors p-1 rounded-full" data-view="legend" title="Back to Legend"><span class="material-symbols-outlined">arrow_back</span></button>
+        <h1 class="font-display text-4xl font-black text-primary flex items-center uppercase tracking-tighter"><span class="material-symbols-outlined align-middle mr-2 text-[32px]">auto_awesome</span>Relics Archive</h1>
+      </div>
+      <p class="font-body text-[16px] text-on-surface-variant max-w-2xl">Passive effects that alter the flow of the game. These items persist throughout your run and provide powerful tactical advantages.</p>
+    </div>
+    <div class="hidden md:flex items-center gap-3">
+      <div class="slate-glass rounded-lg flex items-center px-4 py-2 border border-slate-700/50"><span class="material-symbols-outlined text-outline mr-2 text-[20px]">search</span><input class="bg-transparent border-none p-0 text-on-surface font-body text-[14px] focus:ring-0 w-64 placeholder-outline-variant" placeholder="Search relics..." type="text"/></div>
+      <button class="slate-glass px-4 py-2 rounded-lg border border-slate-700/50 font-display font-bold text-[14px] text-on-surface hover:border-primary transition-all flex items-center gap-2"><span class="material-symbols-outlined text-[18px]">filter_list</span>Filter</button>
+    </div>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-panel-gap">
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all">
+      <div class="w-full aspect-square bg-slate-900/50 rounded-lg flex items-center justify-center border border-slate-800 relative overflow-hidden"><span class="material-symbols-outlined text-[64px] text-primary drop-shadow-[0_0_15px_rgba(250,204,21,0.5)]">visibility</span></div>
+      <div><h3 class="font-display text-lg font-bold text-on-surface mb-1 uppercase tracking-tight">Crimson Eye</h3><p class="font-body text-sm text-on-surface-variant leading-relaxed line-clamp-3">Reveals the dealer's facedown card for the first 3 turns of every round.</p></div>
+      <div class="mt-auto pt-2 border-t border-slate-700/50 flex justify-between items-center"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-primary">Passive Buff</span><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-primary">EXOTIC</span></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all">
+      <div class="w-full aspect-square bg-slate-900/50 rounded-lg flex items-center justify-center border border-slate-800 relative overflow-hidden"><span class="material-symbols-outlined text-[64px] text-tertiary-container drop-shadow-[0_0_15px_rgba(96,197,255,0.3)]">hourglass_empty</span></div>
+      <div><h3 class="font-display text-lg font-bold text-on-surface mb-1 uppercase tracking-tight">Shattered Glass</h3><p class="font-body text-sm text-on-surface-variant leading-relaxed line-clamp-3">Increases turn timer duration by 15% but disables the challenge bar indicator.</p></div>
+      <div class="mt-auto pt-2 border-t border-slate-700/50 flex justify-between items-center"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-tertiary-container">Passive Buff</span><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-tertiary-container">RARE</span></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all">
+      <div class="w-full aspect-square bg-slate-900/50 rounded-lg flex items-center justify-center border border-slate-800 relative overflow-hidden"><span class="material-symbols-outlined text-[64px] text-secondary drop-shadow-[0_0_15px_rgba(139,215,155,0.3)]">currency_exchange</span></div>
+      <div><h3 class="font-display text-lg font-bold text-on-surface mb-1 uppercase tracking-tight">Dealer's Coin</h3><p class="font-body text-sm text-on-surface-variant leading-relaxed line-clamp-3">Once per game, swap hands with the opponent before the flop.</p></div>
+      <div class="mt-auto pt-2 border-t border-slate-700/50 flex justify-between items-center"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-secondary">Active Power</span><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-secondary">UNCOMMON</span></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all">
+      <div class="w-full aspect-square bg-slate-900/50 rounded-lg flex items-center justify-center border border-slate-800 relative overflow-hidden"><span class="material-symbols-outlined text-[64px] text-outline">local_fire_department</span></div>
+      <div><h3 class="font-display text-lg font-bold text-on-surface mb-1 uppercase tracking-tight">Ember Ash</h3><p class="font-body text-sm text-on-surface-variant leading-relaxed line-clamp-3">Burned cards permanently reduce the opponent's maximum bet limit by 2%.</p></div>
+      <div class="mt-auto pt-2 border-t border-slate-700/50 flex justify-between items-center"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-outline">Passive Debuff</span><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-outline">COMMON</span></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all">
+      <div class="w-full aspect-square bg-slate-900/50 rounded-lg flex items-center justify-center border border-slate-800 relative overflow-hidden"><span class="material-symbols-outlined text-[64px] text-error drop-shadow-[0_0_15px_rgba(255,180,171,0.4)]">casino</span></div>
+      <div><h3 class="font-display text-lg font-bold text-on-surface mb-1 uppercase tracking-tight">Loaded Dice</h3><p class="font-body text-sm text-on-surface-variant leading-relaxed line-clamp-3">Increases the probability of drawing face cards by a slight margin.</p></div>
+      <div class="mt-auto pt-2 border-t border-slate-700/50 flex justify-between items-center"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-error">Passive Luck</span><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-error">LEGENDARY</span></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 relative group opacity-60 grayscale">
+      <div class="w-full aspect-square bg-slate-900/50 rounded-lg flex items-center justify-center border border-dashed border-slate-700/80"><span class="material-symbols-outlined text-[64px] text-outline-variant">lock</span></div>
+      <div><h3 class="font-display text-lg font-bold text-outline mb-1 uppercase tracking-tight">Unknown Relic</h3><p class="font-body text-sm text-on-surface-variant italic">Defeat the Lügen Boss in Sector 4 to unlock.</p></div>
+    </div>
+  </div>
+</main>
+
+<!-- VIEW: CONSUMABLES ARCHIVE -->
+<main id="view-consumables" class="view flex-1 mt-16 flex-col p-container-padding pb-32 md:pb-container-padding gap-panel-gap max-w-7xl mx-auto w-full">
+  <div class="flex items-center justify-between mt-8 mb-4">
+    <div>
+      <div class="flex items-center gap-3 mb-2">
+        <button class="text-slate-400 hover:text-yellow-400 transition-colors p-1 rounded-full" data-view="legend" title="Back to Legend"><span class="material-symbols-outlined">arrow_back</span></button>
+        <h1 class="font-display text-4xl font-black text-primary uppercase tracking-tighter flex items-center gap-3"><span class="icon-mask icon-mask--consumables w-12 h-12 text-primary"></span>Consumables Archive</h1>
+      </div>
+      <p class="font-body-standard text-slate-400 max-w-2xl uppercase text-[10px] tracking-[0.2em] font-bold">Items that tip the scales. Single use, maximum impact. Use them wisely when the stakes are highest.</p>
+    </div>
+    <div class="hidden md:flex items-center gap-3">
+      <div class="slate-glass rounded-lg flex items-center px-4 py-2 border border-slate-700/50"><span class="material-symbols-outlined text-slate-500 mr-2 text-[20px]">search</span><input class="bg-transparent border-none p-0 text-slate-200 font-body-standard text-[14px] focus:ring-0 w-64 placeholder-slate-500 uppercase tracking-widest font-bold" placeholder="Search..." type="text"/></div>
+      <button class="slate-glass px-4 py-2 rounded-lg border border-slate-700/50 font-display font-bold text-[14px] text-slate-200 hover:border-primary transition-all flex items-center gap-2 uppercase tracking-widest"><span class="material-symbols-outlined text-[18px]">filter_list</span>Filter</button>
+    </div>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-panel-gap">
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all cursor-pointer">
+      <div class="flex justify-between items-start"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-yellow-500">Legendary</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="w-full aspect-square bg-slate-950/50 rounded-lg flex items-center justify-center border border-slate-800/50 relative overflow-hidden"><span class="material-symbols-outlined text-[64px] text-primary drop-shadow-[0_0_15px_rgba(250,204,21,0.5)]">visibility</span></div>
+      <div><h3 class="font-display text-lg font-bold text-slate-100 uppercase tracking-tight mb-1">Marked Deck</h3><p class="font-body-standard text-sm text-slate-400 leading-relaxed">Reveals the exact suit and rank of the next three cards in the dealer's shoe before you draw.</p></div>
+      <div class="mt-auto flex justify-between items-end pt-4 border-t border-slate-800/50"><div class="flex flex-col"><span class="font-display text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Cost</span><div class="flex items-center gap-1 text-primary"><span class="material-symbols-outlined text-sm">toll</span><span class="font-display text-lg font-black tracking-tighter">2,500</span></div></div><div class="text-right"><span class="font-display text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Stock</span><span class="font-display text-lg font-black text-slate-300 tracking-tighter">01</span></div></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all cursor-pointer">
+      <div class="flex justify-between items-start"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-blue-400">Rare</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="w-full aspect-square bg-slate-950/50 rounded-lg flex items-center justify-center border border-slate-800/50 relative overflow-hidden"><span class="material-symbols-outlined text-[64px] text-blue-400 drop-shadow-[0_0_15px_rgba(96,197,255,0.3)]">draw</span></div>
+      <div><h3 class="font-display text-lg font-bold text-slate-100 uppercase tracking-tight mb-1">Forger</h3><p class="font-body-standard text-sm text-slate-400 leading-relaxed">Alter the suit of any non-face card currently in your hand to match the dominant table suit.</p></div>
+      <div class="mt-auto flex justify-between items-end pt-4 border-t border-slate-800/50"><div class="flex flex-col"><span class="font-display text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Cost</span><div class="flex items-center gap-1 text-primary"><span class="material-symbols-outlined text-sm">toll</span><span class="font-display text-lg font-black tracking-tighter">1,200</span></div></div><div class="text-right"><span class="font-display text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Stock</span><span class="font-display text-lg font-black text-slate-300 tracking-tighter">03</span></div></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all cursor-pointer">
+      <div class="flex justify-between items-start"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400">Uncommon</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="w-full aspect-square bg-slate-950/50 rounded-lg flex items-center justify-center border border-slate-800/50 relative overflow-hidden"><span class="material-symbols-outlined text-[64px] text-emerald-400 drop-shadow-[0_0_15px_rgba(139,215,155,0.3)]">content_copy</span></div>
+      <div><h3 class="font-display text-lg font-bold text-slate-100 uppercase tracking-tight mb-1">Counterfeit</h3><p class="font-body-standard text-sm text-slate-400 leading-relaxed">Create a temporary duplicate of the last card played. Dissolves at the end of the round.</p></div>
+      <div class="mt-auto flex justify-between items-end pt-4 border-t border-slate-800/50"><div class="flex flex-col"><span class="font-display text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Cost</span><div class="flex items-center gap-1 text-primary"><span class="material-symbols-outlined text-sm">toll</span><span class="font-display text-lg font-black tracking-tighter">850</span></div></div><div class="text-right"><span class="font-display text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Stock</span><span class="font-display text-lg font-black text-slate-300 tracking-tighter">05</span></div></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all cursor-pointer">
+      <div class="flex justify-between items-start"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Common</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="w-full aspect-square bg-slate-950/50 rounded-lg flex items-center justify-center border border-slate-800/50 relative overflow-hidden"><span class="material-symbols-outlined text-[64px] text-slate-400">blur_on</span></div>
+      <div><h3 class="font-display text-lg font-bold text-slate-100 uppercase tracking-tight mb-1">Smoke Bomb</h3><p class="font-body-standard text-sm text-slate-400 leading-relaxed">Force a re-deal of the current hand without advancing the turn timer. Basic evasion tactic.</p></div>
+      <div class="mt-auto flex justify-between items-end pt-4 border-t border-slate-800/50"><div class="flex flex-col"><span class="font-display text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Cost</span><div class="flex items-center gap-1 text-primary"><span class="material-symbols-outlined text-sm">toll</span><span class="font-display text-lg font-black tracking-tighter">400</span></div></div><div class="text-right"><span class="font-display text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Stock</span><span class="font-display text-lg font-black text-slate-300 tracking-tighter">12</span></div></div>
+    </div>
+    <div class="slate-glass p-6 rounded-xl border border-slate-700/50 flex flex-col gap-4 group hover:border-primary/50 transition-all cursor-pointer">
+      <div class="flex justify-between items-start"><span class="font-display text-[10px] font-black uppercase tracking-[0.2em] text-red-400">Exotic</span><span class="material-symbols-outlined text-slate-500">more_vert</span></div>
+      <div class="w-full aspect-square bg-slate-950/50 rounded-lg flex items-center justify-center border border-slate-800/50 relative overflow-hidden"><span class="material-symbols-outlined text-[64px] text-red-400 drop-shadow-[0_0_15px_rgba(255,180,171,0.4)]">casino</span></div>
+      <div><h3 class="font-display text-lg font-bold text-slate-100 uppercase tracking-tight mb-1">Loaded Dice</h3><p class="font-body-standard text-sm text-slate-400 leading-relaxed">Guarantee that the next random event or draw rolls the highest possible favorable outcome.</p></div>
+      <div class="mt-auto flex justify-between items-end pt-4 border-t border-slate-800/50"><div class="flex flex-col"><span class="font-display text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Cost</span><div class="flex items-center gap-1 text-primary"><span class="material-symbols-outlined text-sm">toll</span><span class="font-display text-lg font-black tracking-tighter">5,000</span></div></div><div class="text-right"><span class="font-display text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Stock</span><span class="font-display text-lg font-black text-slate-300 tracking-tighter">01</span></div></div>
+    </div>
+  </div>
+</main>
+
+<!-- VIEW: ACHIEVEMENTS — Vault of Records -->
+<main id="view-achievements" class="view flex-1 mt-16 flex-col container mx-auto px-container-padding pb-24 relative z-10">
+  <!-- Header Section -->
+  <div class="mt-8 mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
+    <div>
+      <h1 class="font-pressure-rank text-pressure-rank text-primary-container mb-2">Vault of Records</h1>
+      <p class="font-body-standard text-body-standard text-on-surface-variant max-w-xl">Every hand played leaves a mark. Track your milestones and prove your worth against the house.</p>
+    </div>
+    <div class="bg-surface-container/80 backdrop-blur-md border border-outline-variant rounded-xl px-4 py-3 flex items-center gap-4">
+      <div class="flex flex-col">
+        <span class="font-eyebrow-label text-eyebrow-label text-on-surface-variant uppercase">Total Completion</span>
+        <span class="font-button-text text-button-text text-on-surface">34 / 120</span>
+      </div>
+      <div class="w-32 h-2 bg-surface-container-highest rounded-full overflow-hidden">
+        <div class="bg-primary-container h-full" style="width: 28%"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Achievements Grid -->
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-panel-gap">
+    <!-- Card 1: Completed -->
+    <div class="bg-surface-container/60 backdrop-blur-md border border-outline-variant rounded-xl p-5 relative overflow-hidden group hover:border-primary-container/50 transition-colors">
+      <div class="absolute inset-0 bg-gradient-to-br from-primary-container/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+      <div class="flex justify-between items-start mb-3 relative z-10">
+        <span class="font-eyebrow-label text-eyebrow-label text-primary-container uppercase">Milestones</span>
+        <span class="material-symbols-outlined text-primary-container text-lg icon-fill">check_circle</span>
+      </div>
+      <div class="flex items-center gap-3 mb-2 relative z-10">
+        <div class="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center border border-outline-variant text-on-surface">
+          <span class="material-symbols-outlined">diamond</span>
+        </div>
+        <h3 class="font-button-text text-button-text text-on-surface">Royal Flush</h3>
+      </div>
+      <p class="font-body-standard text-body-standard text-on-surface-variant text-sm mb-4 relative z-10">Play a Royal Flush during a boss encounter.</p>
+      <div class="mt-auto relative z-10">
+        <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-primary-container/10 border border-primary-container/20">
+          <span class="font-eyebrow-label text-eyebrow-label text-primary-container">COMPLETED</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 2: In Progress (Bluff Master) -->
+    <div class="bg-surface-container/60 backdrop-blur-md border border-outline-variant rounded-xl p-5 relative overflow-hidden group hover:border-outline transition-colors">
+      <div class="flex justify-between items-start mb-3 relative z-10">
+        <span class="font-eyebrow-label text-eyebrow-label text-secondary uppercase">Tactics</span>
+      </div>
+      <div class="flex items-center gap-3 mb-2 relative z-10">
+        <div class="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center border border-outline-variant text-on-surface">
+          <span class="material-symbols-outlined">psychology</span>
+        </div>
+        <h3 class="font-button-text text-button-text text-on-surface">Bluff Master</h3>
+      </div>
+      <p class="font-body-standard text-body-standard text-on-surface-variant text-sm mb-4 relative z-10">Win 50 hands where your high card is lower than the dealer's visible card.</p>
+      <div class="mt-auto relative z-10">
+        <div class="flex justify-between items-end mb-1">
+          <span class="font-eyebrow-label text-eyebrow-label text-on-surface-variant">PROGRESS</span>
+          <span class="font-button-text text-xs text-on-surface">42 / 50</span>
+        </div>
+        <div class="w-full h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
+          <div class="bg-primary-container h-full" style="width: 84%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 3: Early Progress (Chip Hoarder) -->
+    <div class="bg-surface-container/60 backdrop-blur-md border border-outline-variant rounded-xl p-5 relative overflow-hidden group hover:border-outline transition-colors">
+      <div class="flex justify-between items-start mb-3 relative z-10">
+        <span class="font-eyebrow-label text-eyebrow-label text-tertiary uppercase">Economy</span>
+      </div>
+      <div class="flex items-center gap-3 mb-2 relative z-10">
+        <div class="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center border border-outline-variant text-on-surface">
+          <span class="material-symbols-outlined">stacked_bar_chart</span>
+        </div>
+        <h3 class="font-button-text text-button-text text-on-surface">Chip Hoarder</h3>
+      </div>
+      <p class="font-body-standard text-body-standard text-on-surface-variant text-sm mb-4 relative z-10">Accumulate over 10,000 chips in a single run.</p>
+      <div class="mt-auto relative z-10">
+        <div class="flex justify-between items-end mb-1">
+          <span class="font-eyebrow-label text-eyebrow-label text-on-surface-variant">PROGRESS</span>
+          <span class="font-button-text text-xs text-on-surface">1,250 / 10k</span>
+        </div>
+        <div class="w-full h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
+          <div class="bg-primary-container h-full" style="width: 12.5%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 4: Not Started (The Gambler) -->
+    <div class="bg-surface-container/40 backdrop-blur-md border border-surface-container-highest rounded-xl p-5 relative overflow-hidden group hover:bg-surface-container/60 transition-colors opacity-75">
+      <div class="flex justify-between items-start mb-3 relative z-10">
+        <span class="font-eyebrow-label text-eyebrow-label text-on-surface-variant uppercase">Combat</span>
+      </div>
+      <div class="flex items-center gap-3 mb-2 relative z-10">
+        <div class="w-10 h-10 rounded-full bg-surface-container-lowest flex items-center justify-center border border-surface-container-highest text-on-surface-variant">
+          <span class="material-symbols-outlined">swords</span>
+        </div>
+        <h3 class="font-button-text text-button-text text-on-surface-variant">The Gambler</h3>
+      </div>
+      <p class="font-body-standard text-body-standard text-on-surface-variant text-sm mb-4 relative z-10">Defeat a Lügen Boss using only Common rarity cards.</p>
+      <div class="mt-auto relative z-10">
+        <div class="flex justify-between items-end mb-1">
+          <span class="font-eyebrow-label text-eyebrow-label text-on-surface-variant">NOT STARTED</span>
+          <span class="font-button-text text-xs text-on-surface-variant">0 / 1</span>
+        </div>
+        <div class="w-full h-1.5 bg-surface-container-lowest rounded-full overflow-hidden border border-surface-container-highest">
+          <div class="bg-surface-variant h-full" style="width: 0%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 5: In Progress (High Roller) -->
+    <div class="bg-surface-container/60 backdrop-blur-md border border-outline-variant rounded-xl p-5 relative overflow-hidden group hover:border-outline transition-colors">
+      <div class="flex justify-between items-start mb-3 relative z-10">
+        <span class="font-eyebrow-label text-eyebrow-label text-secondary uppercase">General</span>
+      </div>
+      <div class="flex items-center gap-3 mb-2 relative z-10">
+        <div class="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center border border-outline-variant text-on-surface">
+          <span class="material-symbols-outlined">casino</span>
+        </div>
+        <h3 class="font-button-text text-button-text text-on-surface">High Roller</h3>
+      </div>
+      <p class="font-body-standard text-body-standard text-on-surface-variant text-sm mb-4 relative z-10">Place a max bet 100 times.</p>
+      <div class="mt-auto relative z-10">
+        <div class="flex justify-between items-end mb-1">
+          <span class="font-eyebrow-label text-eyebrow-label text-on-surface-variant">PROGRESS</span>
+          <span class="font-button-text text-xs text-on-surface">88 / 100</span>
+        </div>
+        <div class="w-full h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
+          <div class="bg-primary-container h-full" style="width: 88%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 6: Completed (Pit Boss) -->
+    <div class="bg-surface-container/60 backdrop-blur-md border border-outline-variant rounded-xl p-5 relative overflow-hidden group hover:border-primary-container/50 transition-colors">
+      <div class="absolute inset-0 bg-gradient-to-br from-primary-container/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+      <div class="flex justify-between items-start mb-3 relative z-10">
+        <span class="font-eyebrow-label text-eyebrow-label text-primary-container uppercase">Combat</span>
+        <span class="material-symbols-outlined text-primary-container text-lg icon-fill">check_circle</span>
+      </div>
+      <div class="flex items-center gap-3 mb-2 relative z-10">
+        <div class="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center border border-outline-variant text-on-surface">
+          <span class="material-symbols-outlined">military_tech</span>
+        </div>
+        <h3 class="font-button-text text-button-text text-on-surface">Pit Boss</h3>
+      </div>
+      <p class="font-body-standard text-body-standard text-on-surface-variant text-sm mb-4 relative z-10">Clear all tables on the first floor without losing a hand.</p>
+      <div class="mt-auto relative z-10">
+        <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-primary-container/10 border border-primary-container/20">
+          <span class="font-eyebrow-label text-eyebrow-label text-primary-container">COMPLETED</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- VIEW: CARDS — Card Inspector -->
+<main id="view-cards" class="view flex-1 mt-16 flex-col">
+  <!-- Side nav (only visible when Cards view is active because it's nested in #view-cards) -->
+  <aside class="fixed left-0 top-16 h-[calc(100vh-64px)] w-64 flex flex-col pt-8 bg-slate-900/90 backdrop-blur-xl border-r border-slate-700 shadow-xl font-['Space_Grotesk'] z-40">
+    <div class="px-6 mb-8">
+      <div class="text-xl font-bold text-yellow-500 tracking-wide">CARD INSPECTOR</div>
+    </div>
+    <nav class="flex-1 flex flex-col gap-1">
+      <a class="cards-tab flex items-center gap-3 px-6 py-3 bg-yellow-500/10 text-yellow-500 border-r-4 border-yellow-500 translate-x-1 active" href="#" data-cards-tab="personal">
+        <span class="material-symbols-outlined">style</span>
+        <span class="font-bold">Personal Deck</span>
+      </a>
+      <a class="cards-tab flex items-center gap-3 px-6 py-3 text-slate-400 hover:bg-slate-800/50 hover:text-yellow-400 transition-all duration-200" href="#" data-cards-tab="round">
+        <span class="material-symbols-outlined">public</span>
+        <span>Round Pool</span>
+      </a>
+      <a class="cards-tab flex items-center gap-3 px-6 py-3 text-slate-400 hover:bg-slate-800/50 hover:text-yellow-400 transition-all duration-200" href="#" data-cards-tab="history">
+        <span class="material-symbols-outlined">history</span>
+        <span>History</span>
+      </a>
+    </nav>
+    <div class="p-6">
+      <button class="w-full py-3 bg-primary text-on-primary font-button-text text-button-text rounded scale-95 active:scale-90 transition-transform hover:bg-yellow-400 transition-colors duration-150">
+        VIEW PROBABILITIES
+      </button>
+    </div>
+  </aside>
+
+  <!-- Content canvas (offset by side nav width). Has its own gradient backdrop. -->
+  <div class="ml-64 min-h-[calc(100vh-64px)] overflow-y-auto bg-gradient-to-br from-[#0d2b1b] to-[#05140a]">
+    <div class="max-w-6xl mx-auto p-8 flex flex-col gap-8 pb-32">
+      <p class="font-body-standard text-body-standard text-secondary-fixed-dim/80">
+        Every card currently in the round deck. Coloured rings mark affixes.
+      </p>
+
+      <!-- Section 1: Your Deck -->
+      <section class="bg-surface-variant/40 backdrop-blur-md border border-primary p-6 rounded-xl relative shadow-lg">
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="font-eyebrow-label text-eyebrow-label text-primary tracking-widest">YOUR PERSONAL DECK (YOU BUILD THIS ACROSS THE RUN)</h2>
+          <span class="font-eyebrow-label text-eyebrow-label text-primary/80 tracking-widest">8 / 24 CAPACITY</span>
+        </div>
+        <div class="grid grid-cols-10 gap-x-4 gap-y-6">
+          <div class="w-card-width h-card-height bg-white rounded flex flex-col items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><span class="font-pressure-rank text-pressure-rank text-black">A</span></div>
+          <div class="w-card-width h-card-height bg-white rounded flex flex-col items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><span class="font-pressure-rank text-pressure-rank text-black">A</span></div>
+          <div class="w-card-width h-card-height bg-white rounded flex flex-col items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><div class="absolute inset-0 border-[3px] border-primary rounded"></div><span class="font-pressure-rank text-pressure-rank text-black">K</span></div>
+          <div class="w-card-width h-card-height bg-white rounded flex flex-col items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><span class="font-pressure-rank text-pressure-rank text-black">K</span></div>
+          <div class="w-card-width h-card-height bg-white rounded flex flex-col items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><div class="absolute inset-0 border-[3px] border-tertiary-container rounded"></div><span class="font-pressure-rank text-pressure-rank text-black">Q</span></div>
+          <div class="w-card-width h-card-height bg-white rounded flex flex-col items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><div class="absolute inset-0 border-[3px] border-error rounded"></div><span class="font-pressure-rank text-pressure-rank text-black">Q</span></div>
+          <div class="w-card-width h-card-height bg-white rounded flex flex-col items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><span class="font-pressure-rank text-pressure-rank text-black">10</span></div>
+          <div class="w-card-width h-card-height bg-white rounded flex flex-col items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><span class="font-pressure-rank text-pressure-rank text-black">10</span></div>
+          <div class="w-card-width h-card-height bg-surface-container/30 border border-outline-variant/30 rounded flex items-center justify-center"></div>
+          <div class="w-card-width h-card-height bg-surface-container/30 border border-outline-variant/30 rounded flex items-center justify-center"></div>
+        </div>
+      </section>
+
+      <!-- Section 2: Round Deck -->
+      <section class="bg-surface-variant/20 backdrop-blur-md border border-outline/20 p-6 rounded-xl">
+        <h2 class="font-eyebrow-label text-eyebrow-label text-on-surface-variant mb-6 tracking-widest">ROUND DECK</h2>
+        <div class="flex flex-col gap-6">
+          <div class="flex items-center gap-6">
+            <div class="w-8 text-center font-pressure-rank text-pressure-rank text-slate-500">A</div>
+            <div class="flex flex-wrap gap-2">
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">A</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><div class="absolute inset-0 border-[3px] border-tertiary-container rounded"></div><span class="font-pressure-rank text-pressure-rank text-black">A</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">A</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">A</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">A</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><div class="absolute inset-0 border-[3px] border-primary rounded"></div><span class="font-pressure-rank text-pressure-rank text-black">A</span></div>
+            </div>
+          </div>
+          <div class="flex items-center gap-6">
+            <div class="w-8 text-center font-pressure-rank text-pressure-rank text-slate-500">K</div>
+            <div class="flex flex-wrap gap-2">
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">K</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><div class="absolute inset-0 border-[3px] border-primary rounded"></div><span class="font-pressure-rank text-pressure-rank text-black">K</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">K</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">K</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">K</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">K</span></div>
+            </div>
+          </div>
+          <div class="flex items-center gap-6">
+            <div class="w-8 text-center font-pressure-rank text-pressure-rank text-slate-500">Q</div>
+            <div class="flex flex-wrap gap-2">
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">Q</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">Q</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">Q</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><div class="absolute inset-0 border-[3px] border-error rounded"></div><span class="font-pressure-rank text-pressure-rank text-black">Q</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">Q</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift relative"><div class="absolute inset-0 border-[3px] border-tertiary-container rounded"></div><span class="font-pressure-rank text-pressure-rank text-black">Q</span></div>
+            </div>
+          </div>
+          <div class="flex items-center gap-6">
+            <div class="w-8 text-center font-pressure-rank text-pressure-rank text-slate-500">J</div>
+            <div class="flex flex-wrap gap-2">
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">J</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">J</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">J</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">J</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">J</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">J</span></div>
+            </div>
+          </div>
+          <div class="flex items-center gap-6">
+            <div class="w-8 text-center font-pressure-rank text-pressure-rank text-slate-500">10</div>
+            <div class="flex flex-wrap gap-2">
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">10</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">10</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">10</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">10</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">10</span></div>
+              <div class="w-card-width h-card-height bg-white rounded flex items-center justify-center cursor-pointer transition-transform duration-0 hover:-translate-y-card-lift"><span class="font-pressure-rank text-pressure-rank text-black">10</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Affix Legend -->
+      <section class="bg-surface-container-low border border-outline/10 p-4 rounded-lg flex items-center gap-8 shadow-inner">
+        <span class="font-eyebrow-label text-eyebrow-label text-on-surface-variant uppercase">Legend</span>
+        <div class="flex gap-6">
+          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-primary ring-2 ring-primary/30"></div><span class="font-body-standard text-body-standard text-on-surface text-sm">Gilded</span></div>
+          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-tertiary-container ring-2 ring-tertiary-container/30"></div><span class="font-body-standard text-body-standard text-on-surface text-sm">Glass</span></div>
+          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-error ring-2 ring-error/30"></div><span class="font-body-standard text-body-standard text-on-surface text-sm">Spiked</span></div>
+          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full border-2 border-outline-variant"></div><span class="font-body-standard text-body-standard text-on-surface-variant text-sm">Standard</span></div>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<!-- ============================================================
+     VIEW: SHOP — between-floor merchant screen
+     (not a top-nav destination; reach via #shop)
+     ============================================================ -->
+<main id="view-shop" class="view flex-1 mt-16 flex-col">
+  <div class="px-6 py-3 bg-slate-900/60 backdrop-blur-md border-b border-slate-700/50 flex justify-between items-center sticky top-16 z-30">
+    <div class="font-eyebrow-label text-eyebrow-label text-on-surface-variant uppercase tracking-widest">Shop &middot; Floor 1</div>
+    <div class="flex items-center gap-2 text-primary">
+      <span class="material-symbols-outlined text-[18px] icon-fill">paid</span>
+      <span class="font-button-text text-button-text">30G</span>
+    </div>
+  </div>
+
+  <div class="px-container-padding max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-panel-gap pt-6 pb-32 w-full">
+    <div class="col-span-1 md:col-span-8 flex flex-col gap-panel-gap">
+      <section class="slate-glass p-6 rounded-xl">
+        <h2 class="font-eyebrow-label text-eyebrow-label text-outline mb-4">JOKERS</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="bg-surface-container p-4 rounded-lg border border-outline-variant flex flex-col items-center text-center">
+            <div class="w-12 h-12 rounded-full bg-surface-variant flex items-center justify-center mb-3 border border-outline"><span class="material-symbols-outlined text-outline">cruelty_free</span></div>
+            <h3 class="font-button-text text-button-text text-on-surface mb-1">The Magpie</h3>
+            <p class="font-body-standard text-body-standard text-on-surface-variant mb-4 text-xs">Steal 1 Gold per round.</p>
+            <button class="mt-auto bg-primary text-on-primary px-4 py-2 rounded font-button-text text-button-text hover:bg-primary-fixed transition-colors w-full">80G</button>
+          </div>
+          <div class="bg-surface-container p-4 rounded-lg border border-outline-variant flex flex-col items-center text-center">
+            <div class="w-12 h-12 rounded-full bg-secondary-container flex items-center justify-center mb-3 border border-secondary"><span class="material-symbols-outlined text-secondary">front_hand</span></div>
+            <h3 class="font-button-text text-button-text text-on-surface mb-1">Slow Hand</h3>
+            <p class="font-body-standard text-body-standard text-on-surface-variant mb-4 text-xs">+2 seconds to turn timer.</p>
+            <button class="mt-auto bg-primary text-on-primary px-4 py-2 rounded font-button-text text-button-text hover:bg-primary-fixed transition-colors w-full">150G</button>
+          </div>
+          <div class="bg-surface-container p-4 rounded-lg border border-outline-variant flex flex-col items-center text-center">
+            <div class="w-12 h-12 rounded-full bg-tertiary-container flex items-center justify-center mb-3 border border-tertiary"><span class="material-symbols-outlined text-tertiary">visibility</span></div>
+            <h3 class="font-button-text text-button-text text-on-surface mb-1">Sixth Sense</h3>
+            <p class="font-body-standard text-body-standard text-on-surface-variant mb-4 text-xs">Reveal one opponent card.</p>
+            <button class="mt-auto bg-surface-variant text-on-surface-variant px-4 py-2 rounded font-button-text text-button-text border border-outline-variant w-full opacity-50 cursor-not-allowed">SOLD</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="slate-glass p-6 rounded-xl">
+        <h2 class="font-eyebrow-label text-eyebrow-label text-outline mb-4">SERVICES &amp; CONSUMABLES</h2>
+        <div class="flex flex-col gap-3">
+          <div class="bg-surface-container p-4 rounded-lg border border-outline-variant flex justify-between items-center">
+            <div>
+              <h3 class="font-button-text text-button-text text-on-surface">Marked Deck</h3>
+              <p class="font-body-standard text-body-standard text-secondary text-xs">Next round, cards face up.</p>
+            </div>
+            <button class="bg-primary text-on-primary px-4 py-2 rounded font-button-text text-button-text hover:bg-primary-fixed transition-colors">50G</button>
+          </div>
+          <div class="bg-surface-container p-4 rounded-lg border border-outline-variant flex justify-between items-center">
+            <div>
+              <h3 class="font-button-text text-button-text text-on-surface">Forger</h3>
+              <p class="font-body-standard text-body-standard text-tertiary text-xs">Change one card suit.</p>
+            </div>
+            <button class="bg-primary text-on-primary px-4 py-2 rounded font-button-text text-button-text hover:bg-primary-fixed transition-colors">75G</button>
+          </div>
+          <div class="bg-surface-container p-4 rounded-lg border border-outline-variant flex justify-between items-center">
+            <div>
+              <h3 class="font-button-text text-button-text text-on-surface">Counterfeit</h3>
+              <p class="font-body-standard text-body-standard text-error text-xs">Duplicate a basic card.</p>
+            </div>
+            <button class="bg-primary text-on-primary px-4 py-2 rounded font-button-text text-button-text hover:bg-primary-fixed transition-colors">100G</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="col-span-1 md:col-span-4 flex flex-col gap-panel-gap">
+      <section class="slate-glass p-6 rounded-xl h-full flex flex-col">
+        <h2 class="font-eyebrow-label text-eyebrow-label text-outline mb-4">CARDS</h2>
+        <div class="flex-1 flex flex-col gap-4">
+          <div class="bg-surface-container p-4 rounded-lg border border-outline-variant flex items-center gap-4">
+            <div class="w-[48px] h-[68px] bg-white rounded flex items-center justify-center border-2 border-slate-300 shrink-0">
+              <span class="font-pressure-rank text-pressure-rank text-black">A<span class="text-red-500 text-sm">&hearts;</span></span>
+            </div>
+            <div class="flex-1">
+              <h3 class="font-button-text text-button-text text-on-surface mb-1">Ace of Hearts</h3>
+              <p class="font-eyebrow-label text-eyebrow-label text-outline">PLAIN</p>
+            </div>
+            <button class="bg-primary text-on-primary px-3 py-1.5 rounded font-button-text text-button-text text-xs hover:bg-primary-fixed transition-colors">100G</button>
+          </div>
+          <div class="bg-surface-container p-4 rounded-lg border border-outline-variant flex items-center gap-4">
+            <div class="w-[48px] h-[68px] bg-white rounded flex items-center justify-center border-2 border-fuchsia-500 shrink-0 shadow-[0_0_10px_rgba(217,70,239,0.5)]">
+              <span class="font-pressure-rank text-pressure-rank text-black">K<span class="text-black text-sm">&spades;</span></span>
+            </div>
+            <div class="flex-1">
+              <h3 class="font-button-text text-button-text text-on-surface mb-1">King of Spades</h3>
+              <p class="font-eyebrow-label text-eyebrow-label text-fuchsia-400">ECHO</p>
+            </div>
+            <button class="bg-primary text-on-primary px-3 py-1.5 rounded font-button-text text-button-text text-xs hover:bg-primary-fixed transition-colors">100G</button>
+          </div>
+          <div class="bg-surface-container p-4 rounded-lg border border-outline-variant flex items-center gap-4">
+            <div class="w-[48px] h-[68px] bg-white rounded flex items-center justify-center border-2 border-pink-400 shrink-0 shadow-[0_0_10px_rgba(244,114,182,0.5)] bg-gradient-to-br from-white to-pink-50">
+              <span class="font-pressure-rank text-pressure-rank text-black">Q<span class="text-red-500 text-sm">&diams;</span></span>
+            </div>
+            <div class="flex-1">
+              <h3 class="font-button-text text-button-text text-on-surface mb-1">Queen of Diamonds</h3>
+              <p class="font-eyebrow-label text-eyebrow-label text-pink-400">MIRAGE</p>
+            </div>
+            <button class="bg-primary text-on-primary px-3 py-1.5 rounded font-button-text text-button-text text-xs hover:bg-primary-fixed transition-colors">100G</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="fixed bottom-0 left-0 w-full p-4 bg-gradient-to-t from-black/60 to-transparent border-t border-white/10 flex justify-center z-40">
+    <button class="bg-primary text-black hover:brightness-110 px-8 py-4 rounded-lg font-pressure-rank font-bold text-[18px] uppercase tracking-wider w-full max-w-md shadow-[0_8px_20px_rgba(234,179,8,0.3)] transition-all active:scale-95">
+      Continue to Floor 2
+    </button>
+  </div>
+</main>
+
+<!-- ============================================================
+     ROUTER
+     ============================================================ -->
+<script>
+  (function () {
+    const views = ["table", "legend", "jokers", "affixes", "relics", "consumables", "achievements", "cards", "shop"];
+    const topNavViews = ["table", "legend", "achievements", "cards"];
+
+    function setView(name) {
+      if (!views.includes(name)) name = "table";
+      views.forEach(v => {
+        const el = document.getElementById("view-" + v);
+        if (!el) return;
+        el.classList.toggle("active", v === name);
+      });
+      document.querySelectorAll(".nav-link").forEach(a => {
+        const v = a.getAttribute("data-view");
+        const tabFor = topNavViews.includes(name)
+          ? name
+          : (["jokers","affixes","relics","consumables"].includes(name) ? "legend" : null);
+        const isActive = (v === tabFor);
+        a.classList.toggle("active", isActive);
+        a.classList.toggle("text-yellow-500", isActive);
+        a.classList.toggle("text-slate-400", !isActive);
+      });
+      if (location.hash !== "#" + name) {
+        history.replaceState(null, "", "#" + name);
+      }
+      window.scrollTo(0, 0);
+    }
+
+    document.addEventListener("click", (e) => {
+      const target = e.target.closest("[data-view]");
+      if (!target) return;
+      e.preventDefault();
+      setView(target.getAttribute("data-view"));
+    });
+
+    const initial = (location.hash || "#table").replace("#", "");
+    setView(initial);
+  })();
+</script>
+
+</body>
+</html>

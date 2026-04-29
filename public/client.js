@@ -459,13 +459,24 @@ function ensureOverlay() {
       <div class="text-yellow-300 text-4xl mb-2">\u{1F4E1}</div>
       <div id="reconnectTitle" class="text-xl font-bold mb-1">Reconnecting...</div>
       <div id="reconnectSub" class="text-sm text-emerald-200 mb-4">Trying to restore your seat.</div>
-      <div class="flex justify-center gap-2">
+      <div class="flex justify-center gap-2 mb-4">
         <span class="w-2 h-2 bg-yellow-300 rounded-full animate-bounce" style="animation-delay:0ms"></span>
         <span class="w-2 h-2 bg-yellow-300 rounded-full animate-bounce" style="animation-delay:150ms"></span>
         <span class="w-2 h-2 bg-yellow-300 rounded-full animate-bounce" style="animation-delay:300ms"></span>
       </div>
+      <button id="reconnectCancelBtn" class="bg-white/10 hover:bg-white/20 active:scale-95 transition px-4 py-2 rounded-lg text-sm font-bold">Cancel &amp; back to lobby</button>
     </div>`;
   document.body.appendChild(el);
+  // Wire Cancel: stop the reconnect attempt, forget the saved session, return
+  // to a clean lobby. We forget the session so the auto-resume on the next
+  // load doesn't immediately put the same overlay back up.
+  const cancelBtn = el.querySelector('#reconnectCancelBtn');
+  if (cancelBtn) cancelBtn.onclick = () => {
+    try { if (typeof socket !== 'undefined' && socket && socket.disconnect) socket.disconnect(); } catch (_) {}
+    try { clearSession(); } catch (_) {}
+    hideOverlay();
+    location.reload();
+  };
   return el;
 }
 function showOverlay(title, sub) {
