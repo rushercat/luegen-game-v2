@@ -415,27 +415,37 @@ function clampInt(v, lo, hi) {
 // ---------- Chat content moderation ----------
 // Returns true if the message contains any banned fragment. Two passes:
 //   1) "Raw" pass over the lowercased text — keeps digits and punctuation, so
-//      we can match numeric memes/codes like "67".
+//      we can match numeric memes/codes like "67" or neo-Nazi number codes.
 //   2) "Normalized" pass: lowercases, folds German umlauts and common
 //      leetspeak digits/symbols to their letter equivalents, then strips
 //      anything that isn't a–z. This collapses tricks like "f1ck", "n!gg3r",
-//      "p.e.d.o", "fück", "Fï_cK" all back to plain letters before matching.
-// To extend either list later, just add to the arrays below.
+//      "p.e.d.o", "fück", "Fï_cK", "k y s" all back to plain letters before
+//      substring matching. Word boundaries are intentionally NOT used so
+//      that "fucking", "ficken", "niggers", etc. all hit their root.
+// Substring matching means a few legit words can collide (see comments below
+// next to each entry). If a real false-positive surfaces in production, drop
+// the offending entry from the list or tighten it.
 function containsBannedChatContent(message) {
   const lower = (message || '').toString().toLowerCase();
 
   // Numeric / punctuation-preserving banned fragments.
-  const RAW_BANNED = ['67'];
+  const RAW_BANNED = [
+    '67',     // user-requested
+    '1488',   // common neo-Nazi numeric code (14 words / 88 = HH)
+    '8814',   // reverse used as a workaround
+  ];
   if (RAW_BANNED.some(b => lower.includes(b))) return true;
 
-  // Letter-only normalized fragments (slurs, German "fick", CSAM-adjacent).
+  // Letter-only normalized fragments (slurs, profanity, CSAM, threats, etc.)
   const normalized = lower
-    // German umlauts → base letters
-    .replace(/[äàáâã]/g, 'a')
-    .replace(/[ëèéê]/g, 'e')
-    .replace(/[ïìíî]/g, 'i')
-    .replace(/[öòóôõ]/g, 'o')
-    .replace(/[üùúû]/g, 'u')
+    // Diacritics / accented Latin → base letters (catches German, French,
+    // Spanish, Portuguese variants without needing separate entries)
+    .replace(/[äàáâãåā]/g, 'a')
+    .replace(/[ëèéêē]/g, 'e')
+    .replace(/[ïìíîī]/g, 'i')
+    .replace(/[öòóôõø]/g, 'o')
+    .replace(/[üùúûū]/g, 'u')
+    .replace(/[ýÿ]/g, 'y')
     .replace(/ß/g, 's')
     .replace(/ñ/g, 'n').replace(/ç/g, 'c')
     // Leetspeak digits/symbols → letters
@@ -446,18 +456,83 @@ function containsBannedChatContent(message) {
     .replace(/[5$]/g, 's')
     .replace(/7/g, 't')
     .replace(/8/g, 'b')
-    // Drop everything else (separators, remaining digits, unicode, etc.)
+    // Drop everything else (spaces, punctuation, leftover digits, unicode)
     .replace(/[^a-z]/g, '');
 
   const NORMALIZED_BANNED = [
-    // Racial / ethnic / homophobic slurs
-    'nigger', 'nigga', 'faggot', 'kike', 'chink', 'spic', 'tranny',
-    // German "fick" family + English "fuck" (catches ficken, ficker, fucked,
-    // fucking, motherfucker, etc.)
-    'fick', 'fuck',
-    // Minor / CSAM-adjacent terminology
-    'pedo', 'pedophile', 'paedophile', 'loli', 'lolicon', 'shota',
-    'childporn', 'kinderporn',
+    // ===== Racial / ethnic / religious slurs =====
+    'nigger', 'nigga', 'niglet',
+    'kike', 'chink', 'gook', 'spic', 'wetback', 'beaner',
+    'towelhead', 'raghead', 'sandnigger',
+    'coon',                  // also hits 'raccoon' — known false positive
+    'wop', 'zipperhead',
+
+    // ===== Homophobic / transphobic slurs =====
+    'faggot', 'fagot',       // 'fagot' = legit musical instrument variant
+    'tranny',                // also hits 'transmission' shorthand — accept
+    'dyke', 'shemale',
+
+    // ===== Ableist slurs =====
+    'retard',                // hits 'retarded'
+    'mongoloid', 'spastic',
+
+    // ===== English profanity =====
+    'fuck',                  // motherfucker, fucking, fucked
+    'shit',                  // bullshit, shitty, etc.
+    'bitch', 'bitches',
+    'cunt', 'twat',
+    'slut', 'whore',
+    'asshole',
+    'dickhead', 'douchebag',
+    'wanker', 'wank',
+
+    // ===== German profanity =====
+    'fick',                  // ficken, ficker, gefickt, verfickt, etc.
+    'arschloch',
+    'hurensohn', 'hurensoehne',
+    'fotze',
+    'wichser',
+    'schlampe',
+    'scheisse',              // catches 'scheiße' via ß→s normalization
+    'verpiss',
+
+    // ===== Other-language profanity =====
+    'putain',                // French
+    'puta', 'pendejo', 'cabron', 'gilipollas',  // Spanish
+    'cazzo', 'stronzo',      // Italian
+
+    // ===== Sexual / inappropriate =====
+    'porn', 'anal',
+    'blowjob', 'handjob',
+    'masturbate', 'masturbating', 'jerkoff',
+    'cumshot', 'cumming',
+    'dildo', 'sextoy',
+    'sendnudes', 'nudes',
+    'horny',
+    'bukkake',
+
+    // ===== Threats / self-harm encouragement =====
+    'killyourself',          // 'kill yourself' once separators are stripped
+    'kys',                   // also catches 'k.y.s.' / 'k y s'
+    'neckyourself',
+    'hangyourself',
+    'godie',                 // 'go die'
+    'killyou', 'killu',
+    'rape', 'rapist',
+    'molest', 'molester',
+
+    // ===== Hate movements / Nazi / KKK =====
+    'hitler',
+    'heilhitler', 'siegheil',
+    'whitepower', 'whitepride',
+    'kkk', 'klansman',
+    'fuhrer',                // 'führer' normalized
+
+    // ===== Minor / CSAM-adjacent =====
+    'pedo', 'pedophile', 'paedophile', 'pedobear',
+    'loli', 'lolicon', 'shota',
+    'childporn', 'kinderporn', 'kinderpornographie',
+    'jailbait', 'underage',
   ];
 
   return NORMALIZED_BANNED.some(b => normalized.includes(b));
