@@ -1301,6 +1301,10 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('chat', ({ message }) => {
+    // Shadow-muted chat: the sender sees their own message echo back so the
+    // UI looks normal, but the message is NOT broadcast to the rest of the
+    // room. To restore real broadcast, swap the `socket.emit` below back to
+    // `io.to(room.id).emit`.
     if (!rateLimit('chat')) return emitError('Stop spamming chat.');
     const room = rooms[currentRoomId];
     if (!room) return;
@@ -1309,9 +1313,7 @@ io.on('connection', async (socket) => {
     const raw = String(message || '');
     const msg = raw.slice(0, 200);
     if (!msg.trim()) return;
-    io.to(room.id).emit('chat', { name: player.name, message: msg });
-    // If we truncated, tell the sender so they don't think the full message
-    // went out. Avoids the silent-truncation footgun flagged in the review.
+    socket.emit('chat', { name: player.name, message: msg });
     if (raw.length > 200) emitError('Your chat message was truncated to 200 characters.');
   });
 
