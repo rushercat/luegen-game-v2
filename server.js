@@ -412,6 +412,57 @@ function clampInt(v, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
 }
 
+// ---------- Chat content moderation ----------
+// Returns true if the message contains any banned fragment. Two passes:
+//   1) "Raw" pass over the lowercased text — keeps digits and punctuation, so
+//      we can match numeric memes/codes like "67".
+//   2) "Normalized" pass: lowercases, folds German umlauts and common
+//      leetspeak digits/symbols to their letter equivalents, then strips
+//      anything that isn't a–z. This collapses tricks like "f1ck", "n!gg3r",
+//      "p.e.d.o", "fück", "Fï_cK" all back to plain letters before matching.
+// To extend either list later, just add to the arrays below.
+function containsBannedChatContent(message) {
+  const lower = (message || '').toString().toLowerCase();
+
+  // Numeric / punctuation-preserving banned fragments.
+  const RAW_BANNED = ['67'];
+  if (RAW_BANNED.some(b => lower.includes(b))) return true;
+
+  // Letter-only normalized fragments (slurs, German "fick", CSAM-adjacent).
+  const normalized = lower
+    // German umlauts → base letters
+    .replace(/[äàáâã]/g, 'a')
+    .replace(/[ëèéê]/g, 'e')
+    .replace(/[ïìíî]/g, 'i')
+    .replace(/[öòóôõ]/g, 'o')
+    .replace(/[üùúû]/g, 'u')
+    .replace(/ß/g, 's')
+    .replace(/ñ/g, 'n').replace(/ç/g, 'c')
+    // Leetspeak digits/symbols → letters
+    .replace(/[4@]/g, 'a')
+    .replace(/3/g, 'e')
+    .replace(/[1!|]/g, 'i')
+    .replace(/0/g, 'o')
+    .replace(/[5$]/g, 's')
+    .replace(/7/g, 't')
+    .replace(/8/g, 'b')
+    // Drop everything else (separators, remaining digits, unicode, etc.)
+    .replace(/[^a-z]/g, '');
+
+  const NORMALIZED_BANNED = [
+    // Racial / ethnic / homophobic slurs
+    'nigger', 'nigga', 'faggot', 'kike', 'chink', 'spic', 'tranny',
+    // German "fick" family + English "fuck" (catches ficken, ficker, fucked,
+    // fucking, motherfucker, etc.)
+    'fick', 'fuck',
+    // Minor / CSAM-adjacent terminology
+    'pedo', 'pedophile', 'paedophile', 'loli', 'lolicon', 'shota',
+    'childporn', 'kinderporn',
+  ];
+
+  return NORMALIZED_BANNED.some(b => normalized.includes(b));
+}
+
 function describeActiveSettings(s) {
   const out = [];
   if (s.liarsBar)         out.push("Liar's Bar Mode");
@@ -1301,10 +1352,13 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('chat', ({ message }) => {
-    // Shadow-muted chat: the sender sees their own message echo back so the
-    // UI looks normal, but the message is NOT broadcast to the rest of the
-    // room. To restore real broadcast, swap the `socket.emit` below back to
-    // `io.to(room.id).emit`.
+    // Chat policy:
+    //   - Logged-in users with a clean message → real broadcast to the room.
+    //   - Guests (not logged in)               → shadow-muted: only the
+    //     sender sees their own message; nobody else receives the event.
+    //   - Logged-in users whose message hits the content filter → also
+    //     shadow-muted on that specific message. They don't know it was
+    //     dropped — fits the "punishable version" model.
     if (!rateLimit('chat')) return emitError('Stop spamming chat.');
     const room = rooms[currentRoomId];
     if (!room) return;
@@ -1313,7 +1367,13 @@ io.on('connection', async (socket) => {
     const raw = String(message || '');
     const msg = raw.slice(0, 200);
     if (!msg.trim()) return;
-    socket.emit('chat', { name: player.name, message: msg });
+
+    const shouldBroadcast = !!socketUser && !containsBannedChatContent(msg);
+    if (shouldBroadcast) {
+      io.to(room.id).emit('chat', { name: player.name, message: msg });
+    } else {
+      socket.emit('chat', { name: player.name, message: msg });
+    }
     if (raw.length > 200) emitError('Your chat message was truncated to 200 characters.');
   });
 
