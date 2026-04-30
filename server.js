@@ -776,6 +776,12 @@ io.on('connection', async (socket) => {
     const room = newRoom(roomId);
     rooms[roomId] = room;
     const player = addPlayer(room, socket, name);
+    if (!player) {
+      // Could only happen if a duplicate-name guard fires, but keep the room
+      // tidy so we don't leak empty rooms.
+      delete rooms[roomId];
+      return;
+    }
     room.hostId = player.id;
     currentRoomId = roomId;
     socket.emit('joined', { roomId, playerId: player.id });
@@ -789,6 +795,7 @@ io.on('connection', async (socket) => {
     if (room.started) return emitError('Game already started.');
     if (room.players.length >= 8) return emitError('Room is full (8 max).');
     const player = addPlayer(room, socket, name);
+    if (!player) return; // duplicate name (or other addPlayer-level rejection)
     currentRoomId = room.id;
     socket.emit('joined', { roomId: room.id, playerId: player.id });
     broadcast(room);
@@ -819,6 +826,29 @@ io.on('connection', async (socket) => {
     const displayName = socketUser
       ? socketUser.username
       : ((name || '').trim().slice(0, 20) || `Player${room.players.length + 1}`);
+    // Banned name fragments (case-insensitive substring match). Any name that
+    // contains one of these anywhere — e.g. "rushercat", "rushercat99",
+    // "hgfrushercat", "Rushercat_xx" — is rejected.
+    // Specific account user-IDs in NAME_BAN_WHITELIST_USER_IDS bypass this
+    // check (used to grandfather in pre-existing accounts that legitimately
+    // own a banned handle).
+    const lowerName = displayName.toLowerCase();
+    const BANNED_NAME_FRAGMENTS = ['rushercat'];
+    const NAME_BAN_WHITELIST_USER_IDS = new Set([
+      '3eb36d54-b69c-4eac-b621-025859eaadd6', // Rushercat (account owner)
+    ]);
+    const isWhitelistedUser = !!socketUser && NAME_BAN_WHITELIST_USER_IDS.has(socketUser.id);
+    const hitFragment = BANNED_NAME_FRAGMENTS.find(frag => lowerName.includes(frag));
+    if (hitFragment && !isWhitelistedUser) {
+      emitError('That name is not allowed. Please choose another.');
+      return null;
+    }
+    // Disallow duplicate names within the same lobby (case-insensitive).
+    const nameTaken = room.players.some(p => (p.name || '').toLowerCase() === lowerName);
+    if (nameTaken) {
+      emitError(`The name "${displayName}" is already taken in this lobby. Please choose another.`);
+      return null;
+    }
     const player = {
       id: newPlayerId(),
       socketId: sock.id,
