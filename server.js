@@ -826,19 +826,32 @@ io.on('connection', async (socket) => {
     const displayName = socketUser
       ? socketUser.username
       : ((name || '').trim().slice(0, 20) || `Player${room.players.length + 1}`);
-    // Banned name fragments (case-insensitive substring match). Any name that
-    // contains one of these anywhere — e.g. "rushercat", "rushercat99",
-    // "hgfrushercat", "Rushercat_xx" — is rejected.
+    // Banned name fragments (case-insensitive substring match against a
+    // normalized form of the name). Normalization lowercases, replaces
+    // common leetspeak digits/symbols with their letter equivalents
+    // (4→a, 3→e, 1→i, 0→o, 5→s, 7→t, 8→b, @→a, !→i, $→s, |→i), and strips
+    // everything that isn't a–z. So "rushercat", "rushercat99",
+    // "hgfrushercat", "Rusher.Cat", "rusher_cat", "rusherc4t", "rush3rcat",
+    // "Rusher-C@t", etc. all collapse to a string containing "rushercat".
     // Specific account user-IDs in NAME_BAN_WHITELIST_USER_IDS bypass this
     // check (used to grandfather in pre-existing accounts that legitimately
     // own a banned handle).
     const lowerName = displayName.toLowerCase();
+    const normalizedName = lowerName
+      .replace(/[4@]/g, 'a')
+      .replace(/3/g, 'e')
+      .replace(/[1!|]/g, 'i')
+      .replace(/0/g, 'o')
+      .replace(/[5$]/g, 's')
+      .replace(/7/g, 't')
+      .replace(/8/g, 'b')
+      .replace(/[^a-z]/g, '');
     const BANNED_NAME_FRAGMENTS = ['rushercat'];
     const NAME_BAN_WHITELIST_USER_IDS = new Set([
       '3eb36d54-b69c-4eac-b621-025859eaadd6', // Rushercat (account owner)
     ]);
     const isWhitelistedUser = !!socketUser && NAME_BAN_WHITELIST_USER_IDS.has(socketUser.id);
-    const hitFragment = BANNED_NAME_FRAGMENTS.find(frag => lowerName.includes(frag));
+    const hitFragment = BANNED_NAME_FRAGMENTS.find(frag => normalizedName.includes(frag));
     if (hitFragment && !isWhitelistedUser) {
       emitError('That name is not allowed. Please choose another.');
       return null;
