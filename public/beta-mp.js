@@ -113,8 +113,8 @@
 
   function rememberSession(roomId, playerId) {
     try {
-      if (roomId)   localStorage.setItem(_RESUME_ROOM_KEY, roomId);
-      if (playerId) localStorage.setItem(_RESUME_PLAYER_KEY, playerId);
+      if (roomId)   localStorage.setItem(_RESUME_ROOM_KEY, String(roomId));
+      if (playerId) localStorage.setItem(_RESUME_PLAYER_KEY, String(playerId));
     } catch (e) {}
   }
   function forgetSession() {
@@ -123,12 +123,54 @@
       localStorage.removeItem(_RESUME_PLAYER_KEY);
     } catch (e) {}
   }
+  // MINOR-3 fix: tolerate legacy data formats. Earlier builds JSON-encoded
+  // some session keys; later builds store plain strings. If we read back a
+  // value that looks like JSON ('{"...":"..."}' or '"abc"'), unwrap it.
+  // Anything that isn't a non-empty plain string after migration is treated
+  // as invalid — we wipe it and return nulls so reconnect doesn't attack
+  // the server with garbage.
+  function _migrateSessionField(raw) {
+    if (raw == null) return null;
+    let val = raw;
+    if (typeof val === 'string' && val.length >= 2 &&
+        (val[0] === '{' || val[0] === '"' || val[0] === '[')) {
+      try {
+        const parsed = JSON.parse(val);
+        // JSON-quoted plain string → unwrap. Object → take .value if present.
+        // Anything else is corrupt for our keys; return null.
+        if (typeof parsed === 'string') val = parsed;
+        else if (parsed && typeof parsed === 'object' && typeof parsed.value === 'string') val = parsed.value;
+        else val = null;
+      } catch (e) { /* not JSON — keep raw */ }
+    }
+    if (typeof val !== 'string' || val.length === 0) return null;
+    // Sanity guard: roomIds and playerIds in this game are short alphanumeric
+    // tokens. If someone hand-edited this to a long arbitrary blob, drop it.
+    if (val.length > 128) return null;
+    return val;
+  }
   function recallSession() {
     try {
-      return {
-        roomId:   localStorage.getItem(_RESUME_ROOM_KEY)   || null,
-        playerId: localStorage.getItem(_RESUME_PLAYER_KEY) || null,
-      };
+      const rawRoom   = localStorage.getItem(_RESUME_ROOM_KEY);
+      const rawPlayer = localStorage.getItem(_RESUME_PLAYER_KEY);
+      const roomId   = _migrateSessionField(rawRoom);
+      const playerId = _migrateSessionField(rawPlayer);
+      // Any field that needed migration (or came back null while raw was set)
+      // means the saved data was stale or in a legacy format. Clear both keys
+      // so we don't keep trying to resume with bad inputs, and surface a soft
+      // notification so the user knows why they were dropped to lobby.
+      const wasLegacy = (rawRoom && rawRoom !== roomId) || (rawPlayer && rawPlayer !== playerId);
+      if (wasLegacy && (!roomId || !playerId)) {
+        forgetSession();
+        const errEl = document.getElementById('betaMpError');
+        if (errEl) {
+          errEl.textContent = 'Saved session was in an old format and has been cleared. Sign in or join a room.';
+          errEl.classList.remove('hidden');
+          setTimeout(() => errEl.classList.add('hidden'), 6000);
+        }
+        return { roomId: null, playerId: null };
+      }
+      return { roomId: roomId || null, playerId: playerId || null };
     } catch (e) { return { roomId: null, playerId: null }; }
   }
 
@@ -1910,16 +1952,36 @@
     if (dtBtn) dtBtn.addEventListener('click', () => socket && socket.emit('beta:useDoubletalk'));
     const slBtn = document.getElementById('betaMpSleightBtn');
     if (slBtn) slBtn.addEventListener('click', () => socket && socket.emit('beta:useSleightOfHand'));
-    // The Screamer (Mythic): activate via UI button (prompts for rank) OR
-    // via window.lugenUseScreamer('K') for power-user / streamer flows.
+    // MP-2 fix: The Screamer (Mythic) shows a clickable rank picker instead
+    // of the old window.prompt() flow. Power users can still skip the
+    // picker via window.lugenUseScreamer('K').
+    function _screamerPicker(onPick) {
+      const old = document.getElementById('betaMpScreamerPicker');
+      if (old) old.remove();
+      const o = document.createElement('div');
+      o.id = 'betaMpScreamerPicker';
+      o.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/80';
+      o.innerHTML = '<div class="bg-rose-950 border-2 border-rose-500 rounded-lg p-6 max-w-md text-center"><h3 class="text-xl font-bold text-rose-200 mb-2">' + String.fromCodePoint(0x1F4E2) + ' The Screamer</h3><p class="text-sm text-rose-100/80 mb-4">Name a rank. Every match in every hand is publicly revealed for the rest of this round.</p><div id="_scrR" class="flex justify-center gap-2 mb-3"></div><button id="_scrX" class="text-xs text-white/60 hover:text-white/90 underline">Cancel</button></div>';
+      document.body.appendChild(o);
+      const ranks = ['A', 'K', 'Q', '10', 'J'];
+      const wrap = o.querySelector('#_scrR');
+      for (const r of ranks) {
+        const b = document.createElement('button');
+        b.className = 'px-3 py-2 rounded ring-2 ring-rose-400 bg-white text-black text-xl font-bold hover:scale-110 transition';
+        b.textContent = r;
+        b.addEventListener('click', () => { o.remove(); onPick(r); });
+        wrap.appendChild(b);
+      }
+      o.querySelector('#_scrX').addEventListener('click', () => o.remove());
+      o.addEventListener('click', e => { if (e.target === o) o.remove(); });
+    }
     function activateScreamer(rankArg) {
       if (!socket) return;
-      let rank = rankArg;
-      if (!rank) {
-        rank = prompt('Screamer — name a rank to reveal (A, K, Q, 10, J):');
-        if (!rank) return;
-      }
-      socket.emit('beta:useScreamer', { rank: String(rank).toUpperCase() });
+      const VALID = ['A', 'K', 'Q', '10', 'J'];
+      const send = (r) => socket.emit('beta:useScreamer', { rank: r });
+      if (!rankArg) { _screamerPicker(send); return; }
+      const rank = String(rankArg).toUpperCase();
+      if (VALID.includes(rank)) send(rank);
     }
     const scrBtn = document.getElementById('betaMpScreamerBtn');
     if (scrBtn) scrBtn.addEventListener('click', () => activateScreamer());

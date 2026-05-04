@@ -28,10 +28,14 @@
   const BOT_NAMES = ['Bot Alice', 'Bot Bob', 'Bot Cleo'];
 
   // Phase 3: economy
-  const GOLD_PLACE_1 = 20;       // 1st-place finisher (emptied hand first)
-  const GOLD_PLACE_2 = 10;       // 2nd-place finisher (emptied hand second)
-  const GOLD_PER_FLOOR_WIN = 30; // floor win bonus
+  // Round-end placement gold (paid per round, not per floor). Tuned so that
+  // skill is rewarded but eliminated/lost players still build a small wallet.
+  const GOLD_PLACE_1 = 30;       // 1st-place finisher (emptied hand first)
+  const GOLD_PLACE_2 = 20;       // 2nd-place finisher (emptied hand second)
+  const GOLD_PLACE_LOSE = 10;    // 3rd/4th — non-finishers still get a consolation
+  const GOLD_PER_FLOOR_WIN = 30; // floor win bonus (Best-of-3 winner)
   const REWARD_NODE_GOLD = 75;
+  const STARTING_GOLD_DEFAULT = 50; // baseline gold at run start (characters can override)
 
   // Phase 4: run deck — every player has 8 personal cards shuffled
   // into the round deck each round.
@@ -370,6 +374,99 @@
     prophet:    { id: 'prophet',    name: 'Prophet',    bluffRate: 0.45, challengeRate: 0.45, tell: null },
   };
 
+  // ============================================================
+  // Phase 9+: Bot loadout system — each personality has a thematic
+  // pool of jokers + relics + affix preferences. Floor scales the
+  // depth (how many items, how rare). Boss floors layer their own
+  // kit on top via BOSS_LOADOUT_BONUS.
+  // ============================================================
+  // Themed pools — only IDs that mechanically matter for bots.
+  const PERSONALITY_LOADOUT = {
+    greedy: {
+      jokers:    ['magpie', 'taxman', 'patron', 'callersMark'],
+      relics:    ['crackedCoin', 'ledger'],
+      affixPool: ['gilded', 'gilded', 'spiked'],
+      premiumAffix: ['gilded', 'steel'],
+      tag: 'hoards gold',
+    },
+    coward: {
+      jokers:    ['safetyNet', 'scapegoat', 'slowHand', 'sixthSense'],
+      relics:    ['cowardsCloak', 'steelSpine', 'hourglass'],
+      affixPool: ['steel', 'cursed'],
+      premiumAffix: ['steel', 'steel', 'mirage'],
+      tag: 'plays defensive',
+    },
+    eager: {
+      jokers:    ['spikedTrap', 'hotSeat', 'taxman', 'vengefulSpirit'],
+      relics:    ['pocketWatch', 'crackedCoin'],
+      affixPool: ['spiked', 'glass', 'hollow'],
+      premiumAffix: ['spiked', 'mirage'],
+      tag: 'aggressive',
+    },
+    methodical: {
+      jokers:    ['surveyor', 'eavesdropper', 'memorizer', 'safetyNet'],
+      relics:    ['handMirror', 'seersEye'],
+      affixPool: ['echo', 'hollow', 'spiked'],
+      premiumAffix: ['steel', 'echo'],
+      tag: 'reads the table',
+    },
+    mimic: {
+      jokers:    ['hotPotato', 'sleightOfHand', 'taxman', 'magpie'],
+      relics:    ['handMirror'],
+      affixPool: ['mirage', 'echo', 'gilded'],
+      premiumAffix: ['mirage', 'mirage'],
+      tag: 'copies you',
+    },
+    wildcard: {
+      jokers:    ['hotPotato', 'spikedTrap', 'magpie', 'callersMark'],
+      relics:    ['hourglass', 'dragonScale'],
+      affixPool: ['glass', 'spiked', 'cursed', 'hollow', 'echo'],  // chaos
+      premiumAffix: ['mirage', 'glass', 'cursed'],
+      tag: 'unpredictable',
+    },
+    prophet: {
+      jokers:    ['surveyor', 'eavesdropper', 'sixthSense', 'callersMark'],
+      relics:    ['handMirror', 'seersEye'],
+      affixPool: ['echo', 'hollow', 'gilded'],
+      premiumAffix: ['echo', 'steel'],
+      tag: 'predicts you',
+    },
+  };
+
+  // Boss personalities get an extra fixed kit on top of their base personality.
+  const BOSS_LOADOUT_BONUS = {
+    auditor: { jokers: ['callersMark', 'taxman'], relics: ['crackedCoin', 'ledger'], affixes: ['gilded', 'gilded'] },
+    cheater: { jokers: ['magpie', 'doppelganger'], relics: ['handMirror'], affixes: ['mirage', 'mirage', 'glass'] },
+    lugen:   { jokers: ['spikedTrap', 'vengefulSpirit', 'sixthSense'], relics: ['ironStomach', 'pocketWatch'], affixes: ['cursed', 'cursed', 'steel'] },
+    mirror:  { jokers: ['memorizer', 'sleightOfHand'], relics: ['handMirror'], affixes: ['mirage', 'echo'] },
+    hollow:  { jokers: ['scapegoat', 'safetyNet'], relics: ['steelSpine', 'cowardsCloak'], affixes: ['hollow', 'cursed'] },
+  };
+
+  // Floor scaling — how many of each thing each bot gets. Boss floors
+  // get the bonus kit ON TOP of these counts.
+  function getBotLoadoutTier(floor) {
+    if (floor <= 1) return { jokers: 0, relics: 0, affixes: 1, premium: false };
+    if (floor <= 2) return { jokers: 1, relics: 0, affixes: 2, premium: false };
+    if (floor <= 3) return { jokers: 1, relics: 0, affixes: 2, premium: false };  // Auditor
+    if (floor <= 4) return { jokers: 1, relics: 1, affixes: 3, premium: false };
+    if (floor <= 5) return { jokers: 2, relics: 1, affixes: 3, premium: true };
+    if (floor <= 6) return { jokers: 2, relics: 1, affixes: 3, premium: true };  // Cheater
+    if (floor <= 7) return { jokers: 2, relics: 2, affixes: 4, premium: true };
+    if (floor <= 8) return { jokers: 3, relics: 2, affixes: 4, premium: true };
+    return { jokers: 3, relics: 2, affixes: 5, premium: true };  // Floor 9 boss
+  }
+
+  function _pickN(arr, n) {
+    const pool = arr.slice();
+    const picked = [];
+    for (let i = 0; i < n && pool.length > 0; i++) {
+      const idx = Math.floor(Math.random() * pool.length);
+      picked.push(pool.splice(idx, 1)[0]);
+    }
+    return picked;
+  }
+  function _pickRandom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
   // Phase 8+: bosses on Floor 3, 6, 9
   // Floor 9 has 3 possible bosses — Lugen (default), and the alts
   // The Mirror and The Hollow that unlock after the first run win.
@@ -450,7 +547,7 @@
     hourglass:    { id: 'hourglass',    name: 'The Hourglass',    price: 250, desc: 'Treasure. Your challenge window is +4s. Bots without it have their windows reduced by 30%.' },
     seersEye:     { id: 'seersEye',     name: "Seer's Eye",       price: 250, desc: 'Treasure. See the affix ring (not rank) on every card in every opponent\'s hand.' },
     crackedMirror:{ id: 'crackedMirror',name: 'Cracked Mirror',   price: 300, desc: 'Treasure. Once per floor: rewind your last play (cards back to hand, pile reverted) — bots\' choices are NOT redone.' },
-    dragonScale:  { id: 'dragonScale',  name: 'Dragon Scale',     price: 300, desc: 'Treasure. Steel cards in your hand grant +1 Jack limit (max +1, regardless of Steel count) and +10% gold per Steel card.' },
+    dragonScale:  { id: 'dragonScale',  name: 'Dragon Scale',     price: 300, desc: 'Treasure. +1 Jack limit (flat). At round end, +20g per Steel card you still hold.' },
     compass:      { id: 'compass',      name: 'The Compass',      price: 300, desc: 'Boss reward. Bot tells become readable in Act III (normally silent).' },
     tarnishedCrown:{ id: 'tarnishedCrown', name: 'Tarnished Crown', price: 250, desc: 'Boss reward. Win a floor without losing any Hearts on it = +50g bonus.' },
     cowardsCloak: { id: 'cowardsCloak', name: "Coward's Cloak",   price: 200, desc: 'Treasure. Your "Pass" actions never trigger Echo / Eavesdropper / Cold Read peeks on your hand.' },
@@ -934,6 +1031,131 @@
     } else {
       runState.auditorEveryN = 0;
     }
+    // Phase 9+: roll a fresh loadout for each bot. Floor scales depth.
+    runState.botJokers = [null, [], [], []];
+    runState.botRelics = [null, [], [], []];
+    runState.botRunDecks = [null, null, null, null];
+    runState.botUsedThisFloor = [null, {}, {}, {}];
+    runState.botUsedThisRound = [null, {}, {}, {}];
+    runState.botPrivatePeeks = [null, [], [], []];
+    for (let i = 1; i < NUM_PLAYERS; i++) {
+      assignBotLoadout(i, runState.botPersonalities[i], runState.currentFloor);
+    }
+  }
+
+  // Phase 9+: build out a single bot's joker/relic/run-deck loadout.
+  // persId may be a personality OR a boss ID. Boss bonus kits stack on
+  // top of the personality pool (or replace it entirely if the boss
+  // doesn't have a fallback personality, which is fine — they get
+  // their fixed kit either way).
+  function assignBotLoadout(botIdx, persId, floor) {
+    if (!runState) return;
+    const tier = getBotLoadoutTier(floor || 1);
+    const isBoss = !!BOSS_CATALOG[persId];
+    const loadout = PERSONALITY_LOADOUT[persId] || PERSONALITY_LOADOUT.methodical;
+    const bossBonus = (isBoss && BOSS_LOADOUT_BONUS[persId]) || null;
+
+    // ---- Jokers ----
+    const jokers = _pickN(loadout.jokers || [], tier.jokers);
+    if (bossBonus && bossBonus.jokers) {
+      for (const jid of bossBonus.jokers) {
+        if (!jokers.includes(jid)) jokers.push(jid);
+      }
+    }
+    runState.botJokers[botIdx] = jokers;
+
+    // ---- Relics ----
+    const relics = _pickN(loadout.relics || [], tier.relics);
+    if (bossBonus && bossBonus.relics) {
+      for (const rid of bossBonus.relics) {
+        if (!relics.includes(rid)) relics.push(rid);
+      }
+    }
+    runState.botRelics[botIdx] = relics;
+
+    // ---- Run deck (8 cards, with affixes from the pool) ----
+    const deck = [];
+    for (const r of ['A', 'K', 'Q', '10']) {
+      for (let i = 0; i < 2; i++) {
+        deck.push({
+          rank: r,
+          id: 'p' + botIdx + '_' + r + '_' + i,
+          owner: botIdx,
+          affix: null,
+        });
+      }
+    }
+    // Sprinkle affixes per the personality pool. Premium tiers (floor 5+)
+    // get to draw from the premium affix list (steel/mirage/etc.).
+    const pool = tier.premium && loadout.premiumAffix
+      ? loadout.premiumAffix.concat(loadout.affixPool || [])
+      : (loadout.affixPool || []);
+    let affixCount = tier.affixes;
+    if (bossBonus && bossBonus.affixes) {
+      for (const ax of bossBonus.affixes) {
+        // Pick a random un-affixed card and slap on the boss-bonus affix.
+        const candidates = deck.filter(c => !c.affix);
+        if (candidates.length === 0) break;
+        _pickRandom(candidates).affix = ax;
+      }
+    }
+    for (let i = 0; i < affixCount; i++) {
+      const candidates = deck.filter(c => !c.affix);
+      if (candidates.length === 0) break;
+      const card = _pickRandom(candidates);
+      card.affix = _pickRandom(pool) || 'spiked';
+    }
+    runState.botRunDecks[botIdx] = deck;
+  }
+
+  // Phase 9+: bot-aware accessors (mirror hasJoker/hasRelic for any seat).
+  function botHasJoker(botIdx, jokerId) {
+    if (botIdx === 0) return hasJoker(jokerId);
+    if (!runState || !runState.botJokers || !runState.botJokers[botIdx]) return false;
+    return runState.botJokers[botIdx].includes(jokerId);
+  }
+  function botHasRelic(botIdx, relicId) {
+    if (botIdx === 0) return hasRelic(relicId);
+    if (!runState || !runState.botRelics || !runState.botRelics[botIdx]) return false;
+    return runState.botRelics[botIdx].includes(relicId);
+  }
+  // Per-player joker/relic lookup. Use this whenever a callsite previously
+  // assumed "the human is the only one who can own X" — wrap it with seatHasX
+  // so any seat with that effect fires.
+  function seatHasJoker(seatIdx, jokerId) {
+    return seatIdx === 0 ? hasJoker(jokerId) : botHasJoker(seatIdx, jokerId);
+  }
+  function seatHasRelic(seatIdx, relicId) {
+    return seatIdx === 0 ? hasRelic(relicId) : botHasRelic(seatIdx, relicId);
+  }
+  // Bot gold (cosmetic — used for tells like "Bot Alice (Greedy) +10g via Taxman")
+  function botAddGold(botIdx, amount) {
+    if (!runState || botIdx === 0) return amount;
+    let mult = 1;
+    if (botHasRelic(botIdx, 'ledger')) mult *= LEDGER_GOLD_MULT;
+    if (runState.currentFloorModifier === 'greedy') mult *= 2;
+    if (runState.currentFloorModifier === 'richFolk') mult *= 0.5;
+    const final = Math.floor(amount * mult);
+    runState.botGold[botIdx] = (runState.botGold[botIdx] || 0) + final;
+    return final;
+  }
+  // Steel-card count in any seat's hand (for Dragon Scale's per-seat bonus).
+  function _steelCountFor(seatIdx) {
+    if (!state || !state.hands || !state.hands[seatIdx]) return 0;
+    return state.hands[seatIdx].filter(c => c.affix === 'steel').length;
+  }
+  // Human-readable label of a bot's loadout, used in the tell line.
+  function botLoadoutSummary(botIdx) {
+    const persId = runState && runState.botPersonalities && runState.botPersonalities[botIdx];
+    if (!persId) return '';
+    const pers = PERSONALITY_CATALOG[persId] || BOSS_CATALOG[persId];
+    if (!pers) return '';
+    const jokers = (runState.botJokers && runState.botJokers[botIdx]) || [];
+    const relics = (runState.botRelics && runState.botRelics[botIdx]) || [];
+    const parts = [pers.name];
+    if (jokers.length > 0) parts.push(jokers.length + 'J');
+    if (relics.length > 0) parts.push(relics.length + 'R');
+    return parts.join(' · ');
   }
 
   // Generate a human-readable seed code like "4F2K-9A7B". The first half
@@ -985,7 +1207,11 @@
       seed: seed,                                  // seed code, e.g. "4F2K-9A7B"
       currentFloor: 1,
       roundsWon: new Array(NUM_PLAYERS).fill(0),
-      gold: (character && character.startingGold) || 0,
+      // Starting gold: characters can override (e.g. Banker = 0). The baseline
+      // gives players a 50g cushion so the very first shop has real choices.
+      gold: (character && character.startingGold !== undefined)
+        ? character.startingGold
+        : STARTING_GOLD_DEFAULT,
       inventory: { smokeBomb: 0, counterfeit: 0, jackBeNimble: 0 },
       runDeck: buildInitialRunDeck(0),
       // 5 joker slots from run start (flat, no per-act ramp). Was [null,null]
@@ -1005,6 +1231,18 @@
       loadedDieUsedThisFloor: false,
       currentFloorModifier: null,    // Phase 8+
       botPersonalities: [null, null, null, null],  // Phase 8+
+      // Phase 9+: per-bot loadouts. Mirrors the human's jokers/relics so
+      // the same code paths fire when bots own the same effects. Index 0
+      // is null (the human's kit lives in runState.jokers / .relics).
+      botJokers:    [null, [], [], []],     // arrays of joker IDs per bot
+      botRelics:    [null, [], [], []],     // arrays of relic IDs per bot
+      botGold:      [0, 0, 0, 0],           // bot gold (cosmetic / for tells)
+      botRunDecks:  [null, null, null, null], // 8-card affixed run-deck per bot
+      botUsedThisFloor: [null, {}, {}, {}], // per-floor cooldowns (deadHand, lastWord, etc.)
+      botUsedThisRound: [null, {}, {}, {}], // per-round cooldowns (callersMark, etc.)
+      // Information bots have learned via their info-class jokers/relics.
+      // Used by botTurn / botDecideChallenge to make smarter calls.
+      botPrivatePeeks: [null, [], [], []],  // [{ targetIdx, cardId, rank, affix }]
       floorLockedBoughtThisFloor: {},  // Tracks Forger / Jack-be-Nimble per-floor purchases
       vengefulNextRoundTargets: [],    // Bots that owe a forced-Jack penalty next round
       lastWordUsedThisFloor: false,
@@ -1191,6 +1429,9 @@
         // Cursed cards track a turn lock; clear it so the new affix takes
         // effect cleanly even if the previous affix was Cursed.
         if (card.cursedTurnsLeft !== undefined) card.cursedTurnsLeft = 0;
+        // MAJOR-2 fix: re-rolled affix means a fresh Mirage budget too.
+        if ('mirageUses' in card) delete card.mirageUses;
+        if (next === 'mirage') card.mirageUses = 0;
       }
       if (changed > 0) {
         log("RANDOM.EXE: " + changed + " run-deck card" + (changed === 1 ? '' : 's') +
@@ -1324,6 +1565,7 @@
       doubletalkUsedThisRound: false,
       sleightUsedThisRound: false,
       ironStomachBurned: [],   // Phase 7+: human's run-deck card IDs burned by Glass this round
+      botIronStomachBurned: [null, [], [], []],   // Phase 9+: bot run-deck card IDs (per seat) burned by Glass this round
       burnedCards: [],         // Phase 8+: cards burned this round (for burn cap recycling)
       auditorChances: 0,       // Bug-fix: Auditor only challenges every Nth chance (N from runState.auditorEveryN)
       lugenLiarUsedThisRound: false, // Lugen's once-per-round out-of-turn Liar
@@ -1370,6 +1612,47 @@
     log('— Floor ' + runState.currentFloor + ', Round ' +
         (totalRoundsPlayed() + 1) +
         ' —  Target: ' + targetRank);
+
+    // Phase 9+: per-round bot loadout housekeeping.
+    if (runState && Array.isArray(runState.botUsedThisRound)) {
+      for (let i = 1; i < NUM_PLAYERS; i++) {
+        runState.botUsedThisRound[i] = {};
+      }
+    }
+    // Bot Cracked Coin: round-start gold (cosmetic — bot gold is for tells).
+    if (runState) {
+      for (let i = 1; i < NUM_PLAYERS; i++) {
+        if (botHasRelic(i, 'crackedCoin')) {
+          const got = botAddGold(i, 5 * runState.hearts);
+          if (got > 0) log('Cracked Coin [' + playerLabel(i) + ']: +' + got + 'g (bot, ' + runState.hearts + ' hearts).');
+        }
+      }
+    }
+    // Bot Hand Mirror / Cold Read — bots learn one card per opponent for AI.
+    // Stored privately on botPrivatePeeks so botTurn / botDecideChallenge
+    // can use them. We don't surface the info to the player (it's the bot's
+    // own knowledge — that asymmetry is the point of bot relics).
+    if (runState && runState.botPrivatePeeks) {
+      for (let i = 1; i < NUM_PLAYERS; i++) {
+        runState.botPrivatePeeks[i] = [];
+        const triggers = [];
+        if (botHasJoker(i, 'coldRead'))   triggers.push('coldRead');
+        if (botHasRelic(i, 'handMirror')) triggers.push('handMirror');
+        if (triggers.length === 0) continue;
+        for (let t = 0; t < NUM_PLAYERS; t++) {
+          if (t === i) continue;
+          if (!state.hands[t] || state.hands[t].length === 0) continue;
+          // Hand Mirror requires opponent to hold ≥2 cards (matches human rule).
+          const triggerId = triggers.find(tg => tg !== 'handMirror' || state.hands[t].length >= 2);
+          if (!triggerId) continue;
+          const card = state.hands[t][Math.floor(Math.random() * state.hands[t].length)];
+          runState.botPrivatePeeks[i].push({
+            targetIdx: t, cardId: card.id, rank: card.rank, affix: card.affix || null,
+            via: triggerId,
+          });
+        }
+      }
+    }
 
     if (hasJoker('coldRead')) {
       const peeks = [];
@@ -1469,6 +1752,18 @@
     state.gameOver = true;
     state.challengeOpen = false;
     clearAllTimers();
+    // MINOR-2 fix: clear any per-round arm flags that should NOT survive
+    // into the next round. Echo is the historical bug — if the round ended
+    // before any opponent played after an Echo card, echoArmedFor stayed
+    // set and could fire on the wrong play. Clear all single-shot arms
+    // here so startRound starts from a known state.
+    state.echoArmedFor = -1;
+    state.doppelArmed = false;
+    state.hotPotatoArmed = false;
+    state.mirrorShardArmed = false;
+    state.lieDetectorArmed = false;
+    state.tricksterMarkedId = null;
+    state.emptyThreatPending = false;
 
     // Last Call modifier penalty: whoever has the most cards left in hand
     // pays 30% of their gold. Solo only the human has a gold pool, so this
@@ -1516,18 +1811,56 @@
         log('Iron Stomach: ' + restored + ' burned card(s) restored as Steel for next round.');
       }
     }
+    // Phase 9+: bot Iron Stomach — same logic per bot, against their botRunDeck.
+    if (state.botIronStomachBurned && Array.isArray(runState.botRunDecks)) {
+      for (let i = 1; i < NUM_PLAYERS; i++) {
+        const ids = state.botIronStomachBurned[i];
+        if (!ids || ids.length === 0) continue;
+        if (!botHasRelic(i, 'ironStomach')) continue;
+        const deck = runState.botRunDecks[i];
+        if (!Array.isArray(deck)) continue;
+        let restored = 0;
+        const seen = new Set();
+        for (const id of ids) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const card = deck.find(c => c.id === id);
+          if (card) { card.affix = 'steel'; restored++; }
+        }
+        if (restored > 0) {
+          log('Iron Stomach [' + playerLabel(i) + ']: ' + restored + ' bot card(s) restored as Steel.');
+        }
+      }
+    }
 
     const humanWonRound = winnerIdx === 0;
     const humanPlace = state.placements.indexOf(0);
 
-    // Placement gold: 1st = 20g, 2nd = 10g, others 0g.
-    // Only the human's placements pay out — bots don't shop yet.
+    // MAJOR-3 fix: Dragon Scale per-Steel payout. +20g for every Steel
+    // card the human still holds at end of round (counts hand only —
+    // burned/picked-up Steel doesn't pay). This replaces the old
+    // "+10% gold per Steel" multiplier baked into addGold.
+    if (hasRelic('dragonScale')) {
+      const steel = _humanSteelCount();
+      if (steel > 0) {
+        const got = addGold(20 * steel);
+        log('Dragon Scale: ' + steel + ' Steel held → +' + got + 'g.');
+      }
+    }
+
+    // Placement gold: 1st = 30g, 2nd = 20g, 3rd/4th = 10g consolation.
+    // Only the human's placement pays out — bots don't shop yet.
     if (humanPlace === 0) {
       const got = addGold(GOLD_PLACE_1);
       log('You finish 1st: +' + got + 'g.');
     } else if (humanPlace === 1) {
       const got = addGold(GOLD_PLACE_2);
       log('You finish 2nd: +' + got + 'g.');
+    } else {
+      // 3rd / 4th / didn't finish: consolation so a bad round still funds
+      // a single cheap consumable next floor.
+      const got = addGold(GOLD_PLACE_LOSE);
+      log('You finish out of placement: +' + got + 'g (consolation).');
     }
     runState.roundsWon[winnerIdx]++;
 
@@ -1604,7 +1937,7 @@
         title = '2nd place — +' + GOLD_PLACE_2 + 'g';
       } else {
         tone = 'lose';
-        title = 'Round lost';
+        title = 'Round lost — +' + GOLD_PLACE_LOSE + 'g';
       }
       showResultModal({
         tone: tone,
@@ -1698,6 +2031,10 @@
     runState.markedDeckUsedThisFloor = false;  // Marked Deck consumable
     runState.emptyThreatUsedThisFloor = false; // Empty Threat consumable
     runState.crackedMirrorUsedThisFloor = false; // Cracked Mirror relic
+    // Phase 9+: clear bot per-floor cooldowns
+    if (Array.isArray(runState.botUsedThisFloor)) {
+      for (let i = 1; i < NUM_PLAYERS; i++) runState.botUsedThisFloor[i] = {};
+    }
     runState.floorStartHearts = runState.hearts; // Tarnished Crown reference point
     if (runState.ach) runState.ach.floorStartTimestamp = Date.now(); // Speed Demon
     runState.tattletaleChargesThisFloor =
@@ -1929,9 +2266,15 @@
     //    the cap below is what keeps a single round balanced.
     const buckets = { 'A': [], 'K': [], 'Q': [], '10': [], 'J': [] };
     for (let p = 0; p < NUM_PLAYERS; p++) {
-      const personalDeck = (p === 0)
-        ? runState.runDeck
-        : buildInitialRunDeck(p);
+      let personalDeck;
+      if (p === 0) {
+        personalDeck = runState.runDeck;
+      } else if (runState.botRunDecks && runState.botRunDecks[p]) {
+        // Phase 9+: bot uses its themed, affixed run deck.
+        personalDeck = runState.botRunDecks[p];
+      } else {
+        personalDeck = buildInitialRunDeck(p);
+      }
       for (const card of personalDeck) {
         if (buckets[card.rank]) buckets[card.rank].push({ ...card });
       }
@@ -2027,13 +2370,19 @@
   }
   function jackLimitFor(p) {
     const playerLimitBonus = (runState && runState.character && runState.character.jackLimitBonus) || 0;
-    const playerJokerBonus = (p === 0 && hasJoker('safetyNet')) ? 1 : 0;
     const greedyDrop = (runState && runState.currentFloorModifier === 'greedy') ? 1 : 0;
     let limit = JACK_LIMIT;
     if (p === 0) {
-      limit += playerLimitBonus + playerJokerBonus;
-      // Dragon Scale: +1 Jack limit per Steel card in hand.
-      if (hasRelic('dragonScale')) limit += Math.min(1, _humanSteelCount());
+      limit += playerLimitBonus;
+      if (hasJoker('safetyNet')) limit += 1;
+      // MAJOR-3 fix: Dragon Scale is a flat +1 Jack limit (regardless of
+      // Steel count). The per-Steel scaling moved to a flat +20g/round
+      // payout in endRound — cleaner and not a Jack-limit balance issue.
+      if (hasRelic('dragonScale')) limit += 1;
+    } else {
+      // Phase 9+: bots get the same bonuses if they own the joker/relic.
+      if (botHasJoker(p, 'safetyNet')) limit += 1;
+      if (botHasRelic(p, 'dragonScale')) limit += 1;
     }
     if (runState && runState.botPersonalities && runState.botPersonalities[p] === 'lugen') {
       limit = 6;
@@ -2277,10 +2626,9 @@
       // Records counts/bluffs by play size + Jack-count-at-play, plus a
       // sliding window of the last N bluff flags. Becameemptyhand flag
       // captures the high-bluff-rate "I HAD to dump my last cards" play.
-      const _jacksBefore = countJacks(hand) - cards.filter(c => c.rank === 'J').length + cards.filter(c => c.rank === 'J').length;
-      // ^ jacksBefore = count we held just before this play (hand still
-      // includes the played cards at this point). Simplified to countJacks
-      // of original hand:
+      // `hand` was captured BEFORE state.hands[playerIdx] was reassigned on
+      // line ~2531, so it still holds the pre-play composition — that's
+      // what we want for "Jacks held when the player chose to play."
       const _jacksAtPlay = countJacks(hand);
       const _becameEmpty = state.hands[0].length === 0;
       _recordHumanPlay(cards.length, wasBluff, _jacksAtPlay, _becameEmpty);
@@ -2466,26 +2814,37 @@
         (isBluff ? 'a BLUFF' : 'truth') + '. Decide whether to call LIAR.');
     }
 
-    // Phase 5: Slow Hand stretches the human's challenge window;
+    // Phase 5: Slow Hand stretches the challenger's window;
     // Sharp character adds +1s on top.
-    let windowMs = (challenger === 0 && hasJoker('slowHand'))
-      ? SLOW_HAND_WINDOW_MS : CHALLENGE_MS;
+    // Phase 9+: any seat with Slow Hand gets the long window.
+    let windowMs = seatHasJoker(challenger, 'slowHand') ? SLOW_HAND_WINDOW_MS : CHALLENGE_MS;
     if (challenger === 0 && runState && runState.character && runState.character.challengeBonusMs) {
       windowMs += runState.character.challengeBonusMs;
     }
-    if (challenger === (NUM_PLAYERS - 1) && hasJoker('hotSeat')) {
-      windowMs = 3000;
+    // Hot Seat: any owner shortens *their right neighbor's* window when that
+    // neighbor is the challenger. (Originally: human-only with right-neighbor-bot.
+    // Generalized: bot-owned Hot Seat squeezes whichever seat is to its right.)
+    for (let seat = 0; seat < NUM_PLAYERS; seat++) {
+      if (!seatHasJoker(seat, 'hotSeat')) continue;
+      const rightNeighbor = (seat + 1) % NUM_PLAYERS;
+      if (challenger === rightNeighbor && challenger !== seat) {
+        windowMs = Math.min(windowMs, 3000);
+      }
     }
-    // Phase 7+: Pocket Watch relic — +5s for the human's window
-    if (challenger === 0 && hasRelic('pocketWatch')) {
+    // Phase 7+: Pocket Watch relic — +5s for the relic owner's window.
+    if (seatHasRelic(challenger, 'pocketWatch')) {
       windowMs += 5000;
     }
-    // The Hourglass relic: +4s for the human; bots without it have -30% window.
-    if (hasRelic('hourglass')) {
-      if (challenger === 0) {
+    // The Hourglass relic: +4s for owners; non-owners get -30% window
+    // (only applies if at least one seat has it — preserves old behavior).
+    let anyHourglass = false;
+    for (let seat = 0; seat < NUM_PLAYERS; seat++) {
+      if (seatHasRelic(seat, 'hourglass')) { anyHourglass = true; break; }
+    }
+    if (anyHourglass) {
+      if (seatHasRelic(challenger, 'hourglass')) {
         windowMs += 4000;
       } else {
-        // bots don't hold relics in solo, so they always get the cut
         windowMs = Math.max(1500, Math.floor(windowMs * 0.70));
       }
     }
@@ -2676,6 +3035,12 @@
           if (glassIdx >= 0) {
             const bc = state.pile[glassIdx];
             if (ironOn && bc.owner === 0) state.ironStomachBurned.push(bc.id);
+            // Phase 9+: bot Iron Stomach tracks bot-owned burned cards.
+            if (bc.owner > 0 && botHasRelic(bc.owner, 'ironStomach')) {
+              if (!state.botIronStomachBurned) state.botIronStomachBurned = [null, [], [], []];
+              if (!state.botIronStomachBurned[bc.owner]) state.botIronStomachBurned[bc.owner] = [];
+              state.botIronStomachBurned[bc.owner].push(bc.id);
+            }
             burnedThisTrigger.push(bc);
             state.pile.splice(glassIdx, 1);
           }
@@ -2688,6 +3053,11 @@
             const pick = burnable[Math.floor(Math.random() * burnable.length)];
             const bc2 = state.pile[pick];
             if (ironOn && bc2.owner === 0) state.ironStomachBurned.push(bc2.id);
+            if (bc2.owner > 0 && botHasRelic(bc2.owner, 'ironStomach')) {
+              if (!state.botIronStomachBurned) state.botIronStomachBurned = [null, [], [], []];
+              if (!state.botIronStomachBurned[bc2.owner]) state.botIronStomachBurned[bc2.owner] = [];
+              state.botIronStomachBurned[bc2.owner].push(bc2.id);
+            }
             burnedThisTrigger.push(bc2);
             state.pile.splice(pick, 1);
           }
@@ -2697,15 +3067,27 @@
           // Glass Cannon: cumulative across runs.
           const total = _achAddProgress('glassBurned', burnedThisTrigger.length);
           if (total >= 100) _achGrant('glassCannon');
-          state.burnedCards.push(...burnedThisTrigger);
-          // Burn cap check: if total exceeds cap, recycle all burned -> draw pile.
-          // The Witch character: their Glass burns don't trigger the recycle —
-          // we just don't track their burns toward the cap.
+          // MAJOR-4 fix: clearer, intentional ordering.
+          // 1. Always credit the Glass Cannon achievement (above) — every burn
+          //    counts toward the lifetime stat regardless of character.
+          // 2. The Witch character ONLY scrubs HER OWN play's glass burns
+          //    from the round's burn cap (matches the original intent of
+          //    "Witch's glass doesn't recycle"). Other seats' burns still
+          //    accumulate and can trigger the cap recycle as normal.
+          // 3. Cap check fires AFTER credit + accumulation, on the actual
+          //    state.burnedCards list, so a single oversized burn can
+          //    immediately recycle without a second trigger to push it
+          //    over the line.
           const witchOn = !!(runState.character && runState.character.witchUncappedGlass);
-          if (witchOn) {
-            // Witch ignores the burn cap entirely.
-            state.burnedCards = [];
-          } else if (state.burnedCards.length > BURN_CAP) {
+          const playerWasWitch = witchOn && lp.playerIdx === 0;
+          if (!playerWasWitch) {
+            state.burnedCards.push(...burnedThisTrigger);
+          }
+          // Note: when playerWasWitch is true we INTENTIONALLY drop these
+          // burns from the cap-tracking list. Their Iron Stomach tracking
+          // still happened earlier (lines just above), so the cards still
+          // come back as Steel — they just don't push the cap.
+          if (state.burnedCards.length > BURN_CAP) {
             const recycled = state.burnedCards.length;
             state.drawPile = shuffle(state.drawPile.concat(state.burnedCards));
             state.burnedCards = [];
@@ -2717,13 +3099,20 @@
       const doSpikedDraws = (takerIdx) => {
         const spikedCount = state.pile.filter(c => c.affix === 'spiked').length;
         const pileSnapshot = state.pile.slice();
-        // Magpie joker (held by HUMAN): when an opponent takes a pile, gain 1g
-        // per affixed card in it. Doesn't fire when the human takes the pile.
-        if (takerIdx !== 0 && hasJoker('magpie')) {
-          const affixed = pileSnapshot.filter(c => c.affix).length;
-          if (affixed > 0) {
-            const got = addGold(affixed);
-            log('Magpie: ' + playerLabel(takerIdx) + ' picks up ' + affixed + ' affixed card(s). +' + got + 'g.');
+        // Magpie joker: any seat with Magpie that ISN'T the taker gains 1g
+        // per affixed card in the pile. (Phase 9+: extended to bots.)
+        const affixedCount = pileSnapshot.filter(c => c.affix).length;
+        if (affixedCount > 0) {
+          for (let s = 0; s < NUM_PLAYERS; s++) {
+            if (s === takerIdx) continue;
+            if (!seatHasJoker(s, 'magpie')) continue;
+            if (s === 0) {
+              const got = addGold(affixedCount);
+              log('Magpie: ' + playerLabel(takerIdx) + ' picks up ' + affixedCount + ' affixed card(s). +' + got + 'g.');
+            } else {
+              const got = botAddGold(s, affixedCount);
+              log('Magpie [' + playerLabel(s) + ']: ' + playerLabel(takerIdx) + ' picks up ' + affixedCount + ' affixed card(s). +' + got + 'g (bot).');
+            }
           }
         }
         // Dead Hand joker (HUMAN only, once per floor): the first 2 Jacks in a
@@ -2765,8 +3154,10 @@
           }
         }
         // Tag Cursed cards with a turn lock as they get picked up.
-        // Steel Spine relic shortens the lock from 2 to 1.
-        const cursedLockTurns = hasRelic('steelSpine') ? 1 : 2;
+        // Steel Spine relic (per-seat) shortens the lock from 2 to 1.
+        // Bots don't gate plays on this counter, but the affix is still in
+        // their hand and (via hasCursed) blocks them from calling Liar.
+        const cursedLockTurns = seatHasRelic(takerIdx, 'steelSpine') ? 1 : 2;
         // Distribute pile cards.
         for (const c of pileSnapshot) {
           const card = { rank: c.rank, id: c.id, owner: c.owner, affix: c.affix };
@@ -2855,14 +3246,24 @@
         const _truthPileSize = state.pile.length;
         log('Truth told. ' + playerLabel(challengerIdx) +
             ' takes the pile (' + _truthPileSize + ' cards) and is skipped.');
-        if (challengerIdx !== 0 && _truthPileSize >= 5 && hasJoker('taxman')) {
-          const got = addGold(10);
-          log('Taxman: ' + playerLabel(challengerIdx) + ' took ' + _truthPileSize + ' cards. +' + got + 'g.');
+        // Taxman: any seat with Taxman fires when a DIFFERENT seat takes ≥5.
+        if (_truthPileSize >= 5) {
+          for (let s = 0; s < NUM_PLAYERS; s++) {
+            if (s === challengerIdx) continue;
+            if (!seatHasJoker(s, 'taxman')) continue;
+            if (s === 0) {
+              const got = addGold(10);
+              log('Taxman: ' + playerLabel(challengerIdx) + ' took ' + _truthPileSize + ' cards. +' + got + 'g.');
+            } else {
+              const got = botAddGold(s, 10);
+              log('Taxman [' + playerLabel(s) + ']: ' + playerLabel(challengerIdx) + ' took ' + _truthPileSize + '. +' + got + 'g (bot).');
+            }
+          }
         }
 
-        // Phase 5: Spiked Trap fires when the human's truthful play is
-        // wrongly challenged — challenger draws 3 extra cards.
-        if (lp.playerIdx === 0 && challengerIdx !== 0 && hasJoker('spikedTrap')) {
+        // Phase 5/9+: Spiked Trap fires when ANY truthful play is wrongly
+        // challenged by someone else — challenger draws 3 extra cards.
+        if (challengerIdx !== lp.playerIdx && seatHasJoker(lp.playerIdx, 'spikedTrap')) {
           let drawn = 0;
           for (let i = 0; i < SPIKED_TRAP_DRAWS; i++) {
             if (state.drawPile.length > 0) {
@@ -2871,7 +3272,7 @@
             }
           }
           if (drawn > 0) {
-            log('Spiked Trap: ' + playerLabel(challengerIdx) + ' draws ' +
+            log('Spiked Trap [' + playerLabel(lp.playerIdx) + ']: ' + playerLabel(challengerIdx) + ' draws ' +
                 drawn + ' extra cards.');
           }
         }
@@ -2914,9 +3315,10 @@
             log('Last Word would have triggered, but the play emptied your hand — no veto.');
           }
         }
-        // Phase 7+: Scapegoat — *one* Jack routed to challenger (per design,
-        // not all of them — that was strictly stronger).
-        if (lp.playerIdx === 0 && hasJoker('scapegoat')) {
+        // Phase 7/9+: Scapegoat — *one* Jack routed to challenger when the
+        // play is caught lying with a Jack in it. Works for any seat that
+        // owns the joker (originally human-only).
+        if (seatHasJoker(lp.playerIdx, 'scapegoat')) {
           const playedJackIds = playedCards.filter(c => c.rank === 'J').map(c => c.id);
           if (playedJackIds.length > 0) {
             const targetId = playedJackIds[0];
@@ -2924,7 +3326,7 @@
             if (jackPileIdx >= 0) {
               const jack = state.pile.splice(jackPileIdx, 1)[0];
               state.hands[challengerIdx].push({ rank: jack.rank, id: jack.id, owner: jack.owner, affix: jack.affix });
-              log('Scapegoat: 1 Jack routed to ' + playerLabel(challengerIdx) + ' (the rest stays with the pile).');
+              log('Scapegoat [' + playerLabel(lp.playerIdx) + ']: 1 Jack routed to ' + playerLabel(challengerIdx) + ' (the rest stays with the pile).');
             }
           }
         }
@@ -2937,9 +3339,19 @@
         log('Lie caught! ' + playerLabel(lp.playerIdx) +
             ' takes the pile (' + _liePileSize + ' cards). ' +
             playerLabel(challengerIdx) + ' leads next.');
-        if (lp.playerIdx !== 0 && _liePileSize >= 5 && hasJoker('taxman')) {
-          const got = addGold(10);
-          log('Taxman: ' + playerLabel(lp.playerIdx) + ' took ' + _liePileSize + ' cards. +' + got + 'g.');
+        // Taxman (any seat) when a DIFFERENT seat takes ≥5 on a lie-caught.
+        if (_liePileSize >= 5) {
+          for (let s = 0; s < NUM_PLAYERS; s++) {
+            if (s === lp.playerIdx) continue;
+            if (!seatHasJoker(s, 'taxman')) continue;
+            if (s === 0) {
+              const got = addGold(10);
+              log('Taxman: ' + playerLabel(lp.playerIdx) + ' took ' + _liePileSize + ' cards. +' + got + 'g.');
+            } else {
+              const got = botAddGold(s, 10);
+              log('Taxman [' + playerLabel(s) + ']: ' + playerLabel(lp.playerIdx) + ' took ' + _liePileSize + '. +' + got + 'g (bot).');
+            }
+          }
         }
         doSpikedDraws(lp.playerIdx);
         if (checkJackCurse(lp.playerIdx)) return;
@@ -3184,7 +3596,10 @@
         false
       );
     if (tellFires) {
-      log('[Tell] ' + playerLabel(botIdx) + ' (' + pers.name + ') ' + pers.tell + '.');
+      // Phase 9+: tell line includes the bot's loadout summary so players
+      // can connect "Greedy + 2 jokers" with the upcoming Magpie/Taxman fire.
+      const summary = botLoadoutSummary(botIdx) || pers.name;
+      log('[Tell] ' + playerLabel(botIdx) + ' (' + summary + ') ' + pers.tell + '.');
     }
 
     playCards(botIdx, cardsToPlay.map(c => c.id));
@@ -3231,7 +3646,7 @@
   function _smoothedBluffRate(plays, bluffs, prior, k) {
     return (bluffs + prior * k) / Math.max(1, plays + k);
   }
-  function predictHumanBluffProb(count, jackCountAtPlay) {
+  function predictHumanBluffProb(count, jackCountAtPlay, opts) {
     const hp = _hp();
     if (!hp) return 0.30;
     const c = Math.max(1, Math.min(4, count | 0));
@@ -3251,6 +3666,39 @@
       const recentRate = recent.filter(Boolean).length / recent.length;
       const drift = (recentRate - 0.5) * 0.20; // 100% truth → -0.10, 100% bluff → +0.10
       combined = Math.max(0.02, Math.min(0.98, combined + drift));
+    }
+    // Phase 9+: advanced Lugen signals. Opt-in so the cheaper Prophet brain
+    // can still skip them.
+    if (opts && opts.advanced) {
+      // (1) Empty-hand pressure: when the play would empty the human's hand,
+      // they're forced to "dump or die." Historical empty-hand bluff rate
+      // is usually 60–80% — much higher than the count-based prior.
+      if (opts.becameEmpty) {
+        const ehRate = _smoothedBluffRate(hp.emptyHandPlays || 0, hp.emptyHandPlaysBluff || 0, 0.65, 4);
+        combined = combined * 0.4 + ehRate * 0.6;  // empty-hand signal dominates
+      }
+      // (2) Big-claim escalation: a 3-card claim from someone who normally
+      // plays 1s is suspicious. Compare to their average claim count.
+      const totalPlays = Object.values(hp.playsByCount || {}).reduce((s, b) => s + (b.plays || 0), 0);
+      if (totalPlays >= 3 && hp.sumClaimCount > 0) {
+        const avgClaim = hp.sumClaimCount / totalPlays;
+        if (c >= 3 && avgClaim < 1.7) combined = Math.min(0.98, combined + 0.12);
+        if (c === 1 && avgClaim > 2.3) combined = Math.max(0.02, combined - 0.08);
+      }
+      // (3) Long bluff streak collapse: humans who've bluffed 4-5 in a row
+      // overwhelmingly tell the truth on play 6 (anti-pattern correction).
+      if (recent.length >= 5 && recent.every(Boolean)) {
+        combined = Math.max(0.02, combined - 0.20);
+      }
+      if (recent.length >= 5 && recent.every(b => !b)) {
+        combined = Math.min(0.98, combined + 0.20);
+      }
+      // (4) Pile-pressure: when the pile is already huge, taking it hurts
+      // worse — both players play it safer. Reduce bluff confidence on
+      // pile ≥ 6.
+      if (opts.pileSize && opts.pileSize >= 6) {
+        combined = Math.max(0.02, combined - 0.08);
+      }
     }
     return combined;
   }
@@ -3287,13 +3735,30 @@
     if ((persId === 'lugen' || persId === 'prophet') && lp.playerIdx === 0) {
       const humanJacksAtPlay = (state.hands[0] || []).filter(c => c.rank === 'J').length;
       // Predict bluff probability with the count + Jack-count signal we
-      // tracked when the play was recorded. Use a small confidence floor
-      // so the bot still ALMOST always engages on triple-card claims.
-      const p = predictHumanBluffProb(lp.count, humanJacksAtPlay);
+      // tracked when the play was recorded. Lugen uses the advanced
+      // predictor (empty-hand pressure, big-claim escalation, long-streak
+      // collapse, pile-pressure dampening). Prophet stays on the simple
+      // model — it's the "good but readable" tier.
+      const advanced = (persId === 'lugen');
+      const becameEmpty = (state.hands[0] && state.hands[0].length === 0);
+      const p = predictHumanBluffProb(lp.count, humanJacksAtPlay, advanced ? {
+        advanced: true,
+        becameEmpty: becameEmpty,
+        pileSize: state.pile.length,
+      } : null);
       // Convert bluff probability into a challenge probability with a
-      // soft sigmoid. Roughly: bluff 0.10 → challenge 0.05; bluff 0.50 →
-      // 0.55; bluff 0.90 → 0.95. Lugen is greedier than prophet.
-      const aggression = persId === 'lugen' ? 1.10 : 0.85;
+      // soft sigmoid. Lugen is greedier than prophet, plus a Jack-rich
+      // bonus: if Lugen is sitting on lots of Jacks itself, calling
+      // a TRUTH would be a disaster (it'd take the pile), so it pulls
+      // back. Conversely, low-Jack Lugen swings harder.
+      let aggression = persId === 'lugen' ? 1.10 : 0.85;
+      if (persId === 'lugen') {
+        const myJackWeight = jackCurseWeight(state.hands[botIdx]);
+        const myLimit = jackLimitFor(botIdx);
+        const margin = myLimit - myJackWeight;
+        if (margin <= 1) aggression *= 0.65;     // one Jack from death — be cautious
+        else if (margin >= 4) aggression *= 1.15; // safe — push the read
+      }
       const challengeP = Math.max(0.02, Math.min(0.98, p * aggression));
       return Math.random() < challengeP;
     }
@@ -3304,6 +3769,38 @@
       base = base * (pers.challengeRate / 0.25);
       base = Math.min(1.0, Math.max(0.02, base));
     }
+    // Phase 9+: information-class jokers/relics nudge the bot's confidence.
+    // - Memorizer: if the pile already shows >50% of the target rank elsewhere,
+    //   a bigger play is more likely to be a bluff.
+    // - Sixth Sense: per stack, 15% chance to peek truth/lie privately.
+    //   We collapse that into a confidence nudge here (the peek itself
+    //   doesn't have UI for bots, so we read the pile directly).
+    // - Cold Read / Hand Mirror peeks: if the bot saw the player holding
+    //   the target rank, an oversized claim is less likely a bluff.
+    if (lp && lp.playerIdx >= 0 && runState && runState.botPrivatePeeks) {
+      const peeks = runState.botPrivatePeeks[botIdx] || [];
+      const peeksOnPlayer = peeks.filter(p => p.targetIdx === lp.playerIdx);
+      const sawTarget = peeksOnPlayer.some(p => p.rank === lp.claim);
+      if (sawTarget) base *= 0.65;       // bot saw a real target → less likely bluff
+      else if (peeksOnPlayer.length >= 2) base *= 1.20;  // saw 2 non-targets → bluffier
+    }
+    if (botHasJoker(botIdx, 'sixthSense')) {
+      const stacks = 1;  // bots equip at base stack 1 (no shop stacking)
+      if (Math.random() < 0.15 * stacks) {
+        // Peek truth/lie directly from the pile and act on it.
+        const played = state.pile.slice(-lp.count);
+        const isBluff = !played.every(c => c.rank === lp.claim || c.affix === 'mirage');
+        return isBluff;  // perfect call
+      }
+    }
+    if (botHasJoker(botIdx, 'eavesdropper')) {
+      // Eavesdropper trains a fuzzy sense of the previous player's match
+      // count to target. We approximate: if their last play was big and
+      // few of the current pile match the target → likely bluff.
+      const matchInPile = state.pile.filter(c => c.rank === lp.claim).length;
+      if (lp.count >= 2 && matchInPile < lp.count) base *= 1.15;
+    }
+    base = Math.min(0.98, Math.max(0.02, base));
     return Math.random() < base;
   }
 
@@ -4227,8 +4724,10 @@
     if (hasRelic('ledger')) mult *= LEDGER_GOLD_MULT;
     if (runState.currentFloorModifier === 'greedy') mult *= 2;  // Phase 8+
     if (runState.currentFloorModifier === 'richFolk') mult *= 0.5;  // Rich Folk: gold halved
-    // Dragon Scale: +10% gold per Steel card in hand.
-    if (hasRelic('dragonScale')) mult *= (1 + 0.10 * _humanSteelCount());
+    // MAJOR-3 fix: removed Dragon Scale's +10%/Steel multiplier here.
+    // The per-Steel reward is now a flat +20g per Steel paid at end of
+    // round (see endRound). That makes the math predictable instead of
+    // compounding with every other gold source.
     const final = Math.floor(amount * mult);
     runState.gold += final;
     return final;
@@ -4322,6 +4821,21 @@
           screamerStrip = '<div class="text-[10px] text-rose-300 my-1 italic">no ' + escapeHtml(state.screamerRevealedRank) + 's</div>';
         }
       }
+      // Phase 9+: surface bot's joker/relic counts so the player can read
+      // what kit they're up against (don't reveal which jokers/relics —
+      // that defeats the read; just the count + personality).
+      let loadoutStrip = '';
+      const botJk = (runState && runState.botJokers && runState.botJokers[i]) || [];
+      const botRl = (runState && runState.botRelics && runState.botRelics[i]) || [];
+      const isBoss = !!(persId && BOSS_CATALOG[persId]);
+      if ((botJk.length > 0 || botRl.length > 0) && !isBoss) {
+        const parts = [];
+        if (botJk.length > 0) parts.push('🃏×' + botJk.length);
+        if (botRl.length > 0) parts.push('💎×' + botRl.length);
+        loadoutStrip = '<div class="text-[10px] text-amber-300 mt-1" title="' +
+          escapeHtml(botJk.concat(botRl).join(', ')) +
+          '">' + parts.join(' ') + '</div>';
+      }
       const card = document.createElement('div');
       card.className = 'bg-black/40 p-3 rounded-lg text-center min-w-[120px]' + ringClass;
       card.innerHTML =
@@ -4329,7 +4843,8 @@
         '<div class="text-2xl font-extrabold my-1">' + handSizeDisplay + '</div>' + seerStrip +
         '<div class="text-xs text-emerald-300">cards</div>' +
         screamerStrip +
-        '<div class="text-xs text-yellow-300 mt-1 min-h-[1rem]">' + status + '</div>';
+        '<div class="text-xs text-yellow-300 mt-1 min-h-[1rem]">' + status + '</div>' +
+        loadoutStrip;
       div.appendChild(card);
     }
   }
@@ -4804,6 +5319,7 @@
             const oldRank = card.rank, oldAffix = card.affix;
             card.rank = r;
             card.affix = null;
+            if ('mirageUses' in card) delete card.mirageUses;  // MAJOR-2 fix
             state.magicianUsedThisRound = true;
             log('Transmute: ' + oldRank + (oldAffix ? '['+oldAffix+']' : '') + ' -> ' + r + ' (affix wiped).');
             modal.classList.add('hidden');
@@ -5445,6 +5961,7 @@
       const card = runState.runDeck[idx];
       const old = card.affix;
       card.affix = null;
+      if ('mirageUses' in card) delete card.mirageUses;  // MAJOR-2 fix
       msg = 'Stripped ' + (old || 'affix') + ' from ' + card.rank + '.';
     }
     log('Cleanse: ' + msg);
@@ -6246,6 +6763,12 @@
         runState.gold -= item.price;
         const prev = card.affix;
         card.affix = affixId;
+        // MAJOR-2 fix: any affix change wipes Mirage's per-card use counter.
+        // Without this, stripping then re-applying Mirage carried the old
+        // count forward, so a "fresh" 200g Mirage Lens could come pre-spent.
+        // Always reset, regardless of prev/new affix.
+        if ('mirageUses' in card) delete card.mirageUses;
+        if (affixId === 'mirage') card.mirageUses = 0;
         const verb = prev ? 'overwrote ' + prev + ' with ' + affixId : 'applied ' + affixId;
         log(item.name + ': ' + verb + ' on ' + card.rank + '. (-' + item.price + 'g)');
         closeServicePicker();
@@ -6322,6 +6845,10 @@
             runState.gold -= item.price;
             target.rank = forgerSource.rank;
             target.affix = forgerSource.affix;
+            // MAJOR-2 fix: target gets a FRESH Mirage budget — don't inherit
+            // (or worse, leak from) the source card's used charges.
+            if ('mirageUses' in target) delete target.mirageUses;
+            if (target.affix === 'mirage') target.mirageUses = 0;
             // Mass Forgery: count copies of this rank+affix in the run deck.
             const sig = target.rank + ':' + (target.affix || '_');
             const matches = runState.runDeck.filter(c => (c.rank + ':' + (c.affix || '_')) === sig).length;
@@ -6967,6 +7494,9 @@
         const newAffix = LUCKY_COIN_AFFIXES[Math.floor(Math.random() * LUCKY_COIN_AFFIXES.length)];
         const old = card.affix || 'plain';
         card.affix = newAffix;
+        // MAJOR-2 fix: any re-roll wipes Mirage's stale use counter.
+        if ('mirageUses' in card) delete card.mirageUses;
+        if (newAffix === 'mirage') card.mirageUses = 0;
         _consumeCharge('luckyCoin');
         log('Lucky Coin: ' + card.rank + ' ' + old + ' -> ' + (newAffix || 'plain') + '.');
         modal.classList.add('hidden');
