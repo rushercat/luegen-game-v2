@@ -413,42 +413,58 @@ function clampInt(v, lo, hi) {
 }
 
 // ---------- Chat content moderation ----------
-// Returns true if the message contains any banned fragment. Two passes:
-//   1) "Raw" pass over the lowercased text — keeps digits and punctuation, so
-//      we can match numeric memes/codes like "67" or neo-Nazi number codes.
-//   2) "Normalized" pass: lowercases, folds German umlauts and common
-//      leetspeak digits/symbols to their letter equivalents, then strips
-//      anything that isn't a–z. This collapses tricks like "f1ck", "n!gg3r",
-//      "p.e.d.o", "fück", "Fï_cK", "k y s" all back to plain letters before
-//      substring matching. Word boundaries are intentionally NOT used so
-//      that "fucking", "ficken", "niggers", etc. all hit their root.
-// Substring matching means a few legit words can collide (see comments below
-// next to each entry). If a real false-positive surfaces in production, drop
-// the offending entry from the list or tighten it.
-function containsBannedChatContent(message) {
-  const lower = (message || '').toString().toLowerCase();
-
-  // Numeric / punctuation-preserving banned fragments.
-  const RAW_BANNED = [
-    '67',     // user-requested
-    '1488',   // common neo-Nazi numeric code (14 words / 88 = HH)
-    '8814',   // reverse used as a workaround
-  ];
-  if (RAW_BANNED.some(b => lower.includes(b))) return true;
-
-  // Letter-only normalized fragments (slurs, profanity, CSAM, threats, etc.)
-  const normalized = lower
-    // Diacritics / accented Latin → base letters (catches German, French,
-    // Spanish, Portuguese variants without needing separate entries)
-    .replace(/[äàáâãåā]/g, 'a')
-    .replace(/[ëèéêē]/g, 'e')
-    .replace(/[ïìíîī]/g, 'i')
-    .replace(/[öòóôõø]/g, 'o')
-    .replace(/[üùúûū]/g, 'u')
-    .replace(/[ýÿ]/g, 'y')
-    .replace(/ß/g, 's')
-    .replace(/ñ/g, 'n').replace(/ç/g, 'c')
-    // Leetspeak digits/symbols → letters
+// Returns one of:
+//   { verdict: 'clean', message }
+//   { verdict: 'mask',  message: masked }    -> broadcast asterisk-masked text
+//   { verdict: 'block', reason }             -> shadow-mute the sender
+//
+// Pipeline: strip invisibles -> fold homoglyphs (Cyrillic/Greek) ->
+//   lowercase + diacritic + leetspeak -> squash 3+ repeated letters ->
+//   match severe/mild fragment lists with allowlist for legit hosts;
+//   plus URL detection and flood/all-caps spam checks.
+function _stripInvisibles(s) {
+  return s
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, '')
+    .replace(/[\u00A0\u2000-\u200A]/g, ' ');
+}
+function _foldHomoglyphs(s) {
+  const map = {
+    '\u0430':'a','\u0410':'a','\u03B1':'a','\u0391':'a',
+    '\u0432':'b','\u0412':'b','\u0392':'b',
+    '\u0441':'c','\u0421':'c',
+    '\u0501':'d',
+    '\u0435':'e','\u0415':'e','\u03B5':'e','\u0395':'e',
+    '\u04BB':'h','\u041D':'h','\u0397':'h',
+    '\u0456':'i','\u0406':'i','\u03B9':'i','\u0399':'i',
+    '\u0458':'j','\u0408':'j',
+    '\u043A':'k','\u041A':'k','\u03BA':'k','\u039A':'k',
+    '\u04CF':'l',
+    '\u043C':'m','\u041C':'m','\u039C':'m',
+    '\u043D':'n','\u039D':'n',
+    '\u043E':'o','\u041E':'o','\u03BF':'o','\u039F':'o','\u00F8':'o',
+    '\u0440':'p','\u0420':'p','\u03C1':'p','\u03A1':'p',
+    '\u051B':'q',
+    '\u0455':'s','\u0405':'s',
+    '\u0442':'t','\u03C4':'t','\u03A4':'t',
+    '\u03C5':'u','\u03A5':'u',
+    '\u0445':'x','\u0425':'x','\u03C7':'x','\u03A7':'x',
+    '\u0443':'y','\u0423':'y',
+    '\u0437':'z','\u0417':'z'
+  };
+  let out = '';
+  for (const ch of s) out += map[ch] || ch;
+  return out;
+}
+function _normalizeLetters(lower) {
+  return lower
+    .replace(/[\u00E4\u00E0\u00E1\u00E2\u00E3\u00E5\u0101]/g, 'a')
+    .replace(/[\u00EB\u00E8\u00E9\u00EA\u0113]/g, 'e')
+    .replace(/[\u00EF\u00EC\u00ED\u00EE\u012B]/g, 'i')
+    .replace(/[\u00F6\u00F2\u00F3\u00F4\u00F5\u00F8]/g, 'o')
+    .replace(/[\u00FC\u00F9\u00FA\u00FB\u016B]/g, 'u')
+    .replace(/[\u00FD\u00FF]/g, 'y')
+    .replace(/\u00DF/g, 's')
+    .replace(/\u00F1/g, 'n').replace(/\u00E7/g, 'c')
     .replace(/[4@]/g, 'a')
     .replace(/3/g, 'e')
     .replace(/[1!|]/g, 'i')
@@ -456,86 +472,183 @@ function containsBannedChatContent(message) {
     .replace(/[5$]/g, 's')
     .replace(/7/g, 't')
     .replace(/8/g, 'b')
-    // Drop everything else (spaces, punctuation, leftover digits, unicode)
     .replace(/[^a-z]/g, '');
+}
+function _squash(lettersOnly) {
+  // Collapse runs of 3+ identical letters to one (preserves natural doubles).
+  return lettersOnly.replace(/(.)\1{2,}/g, '$1');
+}
+function _ultraSquash(lettersOnly) {
+  // Collapse every run of 2+ identical letters to one.
+  return lettersOnly.replace(/(.)\1+/g, '$1');
+}
 
-  const NORMALIZED_BANNED = [
-    // ===== Racial / ethnic / religious slurs =====
-    'nigger', 'nigga', 'niglet',
-    'kike', 'chink', 'gook', 'spic', 'wetback', 'beaner',
-    'towelhead', 'raghead', 'sandnigger',
-    'coon',                  // also hits 'raccoon' — known false positive
-    'wop', 'zipperhead',
+const MILD_NORMALIZED = [
+  'fuck', 'shit', 'bitch', 'cunt', 'twat', 'asshole', 'dickhead',
+  'bastard', 'douchebag', 'wanker', 'wank', 'slut', 'whore',
+  'fick', 'arschloch', 'scheisse', 'verpiss', 'fotze', 'wichser',
+  'schlampe', 'hurensohn',
+  'putain', 'puta', 'pendejo', 'cabron', 'gilipollas',
+  'cazzo', 'stronzo'
+];
 
-    // ===== Homophobic / transphobic slurs =====
-    'faggot', 'fagot',       // 'fagot' = legit musical instrument variant
-    'tranny',                // also hits 'transmission' shorthand — accept
-    'dyke', 'shemale',
+const SEVERE_NORMALIZED = [
+  'nigger', 'nigga', 'niglet',
+  'kike', 'chink', 'gook', 'spic', 'wetback', 'beaner',
+  'towelhead', 'raghead', 'sandnigger',
+  'coon', 'wop', 'zipperhead',
+  'faggot', 'fagot', 'tranny', 'dyke', 'shemale',
+  'retard', 'mongoloid', 'spastic',
+  'porn', 'anal', 'blowjob', 'handjob', 'masturbate', 'jerkoff',
+  'cumshot', 'cumming', 'dildo', 'sextoy', 'sendnudes', 'nudes',
+  'horny', 'bukkake',
+  'killyourself', 'neckyourself', 'hangyourself', 'godie',
+  'killyou', 'killu', 'rape', 'rapist', 'molest', 'molester',
+  'hitler', 'heilhitler', 'siegheil', 'whitepower', 'whitepride',
+  'kkk', 'klansman', 'fuhrer',
+  'pedo', 'pedophile', 'paedophile', 'pedobear',
+  'loli', 'lolicon', 'shota',
+  'childporn', 'kinderporn', 'kinderpornographie',
+  'jailbait', 'underage'
+];
 
-    // ===== Ableist slurs =====
-    'retard',                // hits 'retarded'
-    'mongoloid', 'spastic',
+const SEVERE_HARASSMENT = [
+  'youresotrash', 'youaresotrash', 'youretrash', 'yourtrash',
+  'youresostupid', 'youresodumb', 'youreidiot', 'youreanidiot',
+  'youshouldjustdie', 'iwillkillyou', 'illkillyou',
+  'fuckyou', 'fuckoff', 'eatshit', 'suckmydick'
+];
 
-    // ===== English profanity =====
-    'fuck',                  // motherfucker, fucking, fucked
-    'shit',                  // bullshit, shitty, etc.
-    'bitch', 'bitches',
-    'cunt', 'twat',
-    'slut', 'whore',
-    'asshole',
-    'dickhead', 'douchebag',
-    'wanker', 'wank',
+// Short codes that REQUIRE word-boundary matching (false-positive prone)
+const SEVERE_BOUNDED = ['67', '1488', '8814', 'kys'];
 
-    // ===== German profanity =====
-    'fick',                  // ficken, ficker, gefickt, verfickt, etc.
-    'arschloch',
-    'hurensohn', 'hurensoehne',
-    'fotze',
-    'wichser',
-    'schlampe',
-    'scheisse',              // catches 'scheiße' via ß→s normalization
-    'verpiss',
+const ALLOWLIST_NORMALIZED = [
+  'raccoon', 'classic', 'class', 'classy',
+  'assassin', 'assassination', 'assess', 'assessment',
+  'cassette', 'masseuse', 'embarrass', 'harass', 'harassment',
+  'scunthorpe', 'penistone', 'arsenal', 'arsenic',
+  'analysis', 'analyze', 'analytic', 'analog', 'canal',
+  'cockpit', 'cocktail', 'peacock',
+  'transmission', 'translation', 'transparent', 'transit',
+  'shellfish', 'shelter',
+  'document', 'documentation', 'documents'
+];
 
-    // ===== Other-language profanity =====
-    'putain',                // French
-    'puta', 'pendejo', 'cabron', 'gilipollas',  // Spanish
-    'cazzo', 'stronzo',      // Italian
+function _hasUrl(text) {
+  if (/(https?:\/\/|www\.)\S+/i.test(text)) return true;
+  if (/\b[a-z0-9-]+\s*(?:\[\.\]|\(\.\)|\{dot\}|\sdot\s|\.)\s*(?:com|net|org|io|gg|xyz|de|co|uk|tk|ml|ru|cn|info|biz|tv|me|app|dev|link|click|shop|site|online)\b/i.test(text)) return true;
+  return false;
+}
+function _isFloodSpam(text) {
+  if (/(.)\1{14,}/.test(text)) return true;
+  const letters = text.match(/[a-zA-Z]/g) || [];
+  if (letters.length >= 20) {
+    const upper = letters.filter(c => c === c.toUpperCase()).length;
+    if (upper / letters.length >= 0.9) return true;
+  }
+  if (/\b(\w+)\b(?:\s+\1\b){4,}/i.test(text)) return true;
+  return false;
+}
 
-    // ===== Sexual / inappropriate =====
-    'porn', 'anal',
-    'blowjob', 'handjob',
-    'masturbate', 'masturbating', 'jerkoff',
-    'cumshot', 'cumming',
-    'dildo', 'sextoy',
-    'sendnudes', 'nudes',
-    'horny',
-    'bukkake',
+const MILD_CHAR_CLASSES = {
+  'a':'a4@\u00E4\u00E0\u00E1\u00E2\u00E3\u00E5\u0101\u0430\u0410\u03B1\u0391',
+  'b':'b8\u0432\u0412\u0392',
+  'c':'c\u00E7\u0441\u0421',
+  'd':'d',
+  'e':'e3\u00EB\u00E8\u00E9\u00EA\u0113\u0435\u0415\u03B5\u0395',
+  'f':'f',
+  'g':'g',
+  'h':'h\u04BB\u041D\u0397',
+  'i':'i1!|\u00EF\u00EC\u00ED\u00EE\u012B\u0456\u0406\u03B9\u0399',
+  'j':'j\u0458\u0408',
+  'k':'k\u043A\u041A\u03BA\u039A',
+  'l':'l\u04CF',
+  'm':'m\u043C\u041C\u039C',
+  'n':'n\u00F1\u043D\u039D',
+  'o':'o0\u00F6\u00F2\u00F3\u00F4\u00F5\u00F8\u043E\u041E\u03BF\u039F',
+  'p':'p\u0440\u0420\u03C1\u03A1',
+  'q':'q\u051B',
+  'r':'r',
+  's':'s5$\u00DF\u0455\u0405',
+  't':'t7\u0442\u03C4\u03A4',
+  'u':'u\u00FC\u00F9\u00FA\u00FB\u016B\u03C5\u03A5',
+  'v':'v',
+  'w':'w',
+  'x':'x\u0445\u0425\u03C7\u03A7',
+  'y':'y\u00FD\u00FF\u0443\u0423',
+  'z':'z\u0437\u0417'
+};
+function _maskFragment(text, frag) {
+  const charClass = (c) => '[' + (MILD_CHAR_CLASSES[c] || c) + ']+';
+  const pattern = frag.split('').map(charClass).join('[\\s._\\-*]*');
+  const re = new RegExp(pattern, 'gi');
+  return text.replace(re, m => '*'.repeat(m.length));
+}
 
-    // ===== Threats / self-harm encouragement =====
-    'killyourself',          // 'kill yourself' once separators are stripped
-    'kys',                   // also catches 'k.y.s.' / 'k y s'
-    'neckyourself',
-    'hangyourself',
-    'godie',                 // 'go die'
-    'killyou', 'killu',
-    'rape', 'rapist',
-    'molest', 'molester',
+function _hasFragment(normalized, squashed, ultra, frag) {
+  if (normalized.includes(frag) || squashed.includes(frag)) return true;
+  // Ultra-squashed fallback: only fire if the fragment actually had
+  // repeated letters (so fragUltra differs from frag) AND fragUltra is
+  // long enough to not collide with random text.
+  const fragUltra = frag.replace(/(.)\1+/g, '$1');
+  if (fragUltra === frag || fragUltra.length < 4) return false;
+  return ultra.includes(fragUltra);
+}
+function _isBenignThroughAllowlist(frag, normalized, squashed, ultra) {
+  for (const allow of ALLOWLIST_NORMALIZED) {
+    if (allow.includes(frag) && (normalized.includes(allow) || squashed.includes(allow))) return true;
+    const allowUltra = allow.replace(/(.)\1+/g, '$1');
+    const fragUltra  = frag.replace(/(.)\1+/g, '$1');
+    if (fragUltra.length >= 4 && allowUltra.includes(fragUltra) && ultra.includes(allowUltra)) return true;
+  }
+  return false;
+}
 
-    // ===== Hate movements / Nazi / KKK =====
-    'hitler',
-    'heilhitler', 'siegheil',
-    'whitepower', 'whitepride',
-    'kkk', 'klansman',
-    'fuhrer',                // 'führer' normalized
+function moderateChatMessage(message) {
+  const original = String(message || '');
+  if (!original) return { verdict: 'clean', message: original };
 
-    // ===== Minor / CSAM-adjacent =====
-    'pedo', 'pedophile', 'paedophile', 'pedobear',
-    'loli', 'lolicon', 'shota',
-    'childporn', 'kinderporn', 'kinderpornographie',
-    'jailbait', 'underage',
-  ];
+  const cleaned = _foldHomoglyphs(_stripInvisibles(original));
 
-  return NORMALIZED_BANNED.some(b => normalized.includes(b));
+  if (_hasUrl(cleaned)) return { verdict: 'block', reason: 'url' };
+  if (_isFloodSpam(cleaned)) return { verdict: 'block', reason: 'spam' };
+
+  const lower = cleaned.toLowerCase();
+  const normalized = _normalizeLetters(lower);
+  const squashed   = _squash(normalized);
+  const ultra      = _ultraSquash(normalized);
+
+  for (const code of SEVERE_BOUNDED) {
+    const re = new RegExp('(?:^|[^a-z0-9])' + code + '(?:[^a-z0-9]|$)', 'i');
+    if (re.test(original)) return { verdict: 'block', reason: 'severe' };
+  }
+
+  for (const frag of SEVERE_NORMALIZED) {
+    if (_hasFragment(normalized, squashed, ultra, frag) && !_isBenignThroughAllowlist(frag, normalized, squashed, ultra)) {
+      return { verdict: 'block', reason: 'severe' };
+    }
+  }
+  for (const frag of SEVERE_HARASSMENT) {
+    if (_hasFragment(normalized, squashed, ultra, frag)) {
+      return { verdict: 'block', reason: 'harassment' };
+    }
+  }
+
+  let masked = original;
+  let didMask = false;
+  for (const frag of MILD_NORMALIZED) {
+    if (_hasFragment(normalized, squashed, ultra, frag) && !_isBenignThroughAllowlist(frag, normalized, squashed, ultra)) {
+      masked = _maskFragment(masked, frag);
+      didMask = true;
+    }
+  }
+  if (didMask) return { verdict: 'mask', message: masked };
+  return { verdict: 'clean', message: original };
+}
+
+// Back-compat shim for older call sites: true iff the moderator blocks.
+function containsBannedChatContent(message) {
+  return moderateChatMessage(message).verdict === 'block';
 }
 
 function describeActiveSettings(s) {
@@ -1443,9 +1556,18 @@ io.on('connection', async (socket) => {
     const msg = raw.slice(0, 200);
     if (!msg.trim()) return;
 
-    const shouldBroadcast = !!socketUser && !containsBannedChatContent(msg);
+    let outMsg = msg;
+    let shouldBroadcast = !!socketUser;
     if (shouldBroadcast) {
-      io.to(room.id).emit('chat', { name: player.name, message: msg });
+      const verdict = moderateChatMessage(msg);
+      if (verdict.verdict === 'block') {
+        shouldBroadcast = false;
+      } else if (verdict.verdict === 'mask') {
+        outMsg = verdict.message;
+      }
+    }
+    if (shouldBroadcast) {
+      io.to(room.id).emit('chat', { name: player.name, message: outMsg });
     } else {
       socket.emit('chat', { name: player.name, message: msg });
     }
