@@ -28,6 +28,8 @@ const STORAGE_KEY = 'lugen-session';
 
 const SOUND_GUNSHOT = '/sounds/gunshot.mp3';
 const SOUND_CLICK   = '/sounds/click.mp3';
+const SOUND_NO      = '/sounds/noe.mp3';
+const SOUND_NOTIFY  = '/sounds/notify.mp3';
 
 let myId = null;
 let myHand = [];
@@ -446,6 +448,8 @@ function playSound(src, volume) {
 }
 function playGunshot() { playSound(SOUND_GUNSHOT, 0.85); }
 function playClick()   { playSound(SOUND_CLICK,   0.7); }
+function playNo()      { playSound(SOUND_NO,      0.9); }
+function playNotify()  { playSound(SOUND_NOTIFY,  0.8); }
 
 // ---------- Reconnecting overlay ----------
 function ensureOverlay() {
@@ -575,6 +579,9 @@ socket.on('kicked', ({ reason }) => {
 });
 
 socket.on('roomState', (state) => {
+  const prevTurnId = roomState && roomState.started && !roomState.gameOver
+    ? (roomState.players && roomState.players[roomState.currentTurnIdx] && roomState.players[roomState.currentTurnIdx].id)
+    : null;
   roomState = state;
   if (!state.started) {
     $('waitingRoom').classList.remove('hidden');
@@ -584,6 +591,14 @@ socket.on('roomState', (state) => {
     $('waitingRoom').classList.add('hidden');
     $('game').classList.remove('hidden');
     renderGame(state);
+  }
+  // Notify the local player when the turn transitions to them.
+  if (state.started && !state.gameOver && myId) {
+    const cur = state.players && state.players[state.currentTurnIdx];
+    const curId = cur && cur.id;
+    const meP = state.players && state.players.find(p => p.id === myId);
+    const myAlive = !meP || meP.alive !== false;
+    if (curId === myId && prevTurnId !== myId && myAlive) playNotify();
   }
   if (state.gameOver) {
     showGameOver(state);
@@ -605,6 +620,7 @@ socket.on('hand', (hand) => {
 });
 
 socket.on('reveal', ({ cards, claimed, wasLie, challengerName, lastPlayerName }) => {
+  if (wasLie) playNo();
   const rev = $('revealArea');
   const verdict = wasLie
     ? `LIE! ${challengerName} called ${lastPlayerName} out - claimed ${claimed}`
