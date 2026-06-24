@@ -1748,6 +1748,32 @@
       });
     }
 
+    // Copy invite link — turns the room code into a full shareable URL
+    // (origin + path + ?room=CODE#beta). Whoever opens it auto-joins this
+    // room (see the ?room= handler at the end of init()). Clipboard API
+    // with a window.prompt fallback, mirroring the seed share button.
+    const copyLinkBtn = document.getElementById('betaMpCopyLinkBtn');
+    if (copyLinkBtn) {
+      copyLinkBtn.addEventListener('click', async () => {
+        const codeEl = document.getElementById('betaMpRoomCode');
+        const rid = myRoomId || (lastState && lastState.id) ||
+          (codeEl && codeEl.textContent) || '';
+        if (!rid || rid === '-----') {
+          alert('No room yet — create or join a room first.');
+          return;
+        }
+        const url = location.origin + location.pathname +
+          '?room=' + encodeURIComponent(rid) + '#beta';
+        try {
+          await navigator.clipboard.writeText(url);
+          copyLinkBtn.textContent = 'Link copied!';
+          setTimeout(() => { copyLinkBtn.textContent = 'Copy invite link'; }, 1500);
+        } catch (e) {
+          window.prompt('Copy this invite link:', url);
+        }
+      });
+    }
+
     // 5.7 — Daily challenge UI. Cached for the page session so we only hit
     // the endpoint once per visit (it doesn't change until UTC midnight).
     let _dailyCache = null;
@@ -2056,6 +2082,51 @@
       const intro = document.getElementById('betaIntro');
       if (intro) intro.classList.remove('hidden');
     });
+
+    // Invite-link auto-join: opening a shared ?room=CODE link drops you
+    // straight into that lobby. Reveal the beta MP UI (hide the main menu,
+    // like the beta tab + multiplayer buttons do), connect, then join —
+    // unless we already have a saved seat for the same room, in which case
+    // the 'connect' handler resumes it instead (avoids a duplicate seat on
+    // self-refresh). The ?room= param is then stripped so a later refresh
+    // doesn't re-trigger the join.
+    try {
+      const usp = new URLSearchParams(location.search);
+      const inviteRoom = (usp.get('room') || '').trim().toUpperCase();
+      if (inviteRoom) {
+        const menu = document.getElementById('lobby');
+        if (menu) menu.classList.add('hidden');
+        const beta = document.getElementById('betaTesting');
+        if (beta) beta.classList.remove('hidden');
+        const intro = document.getElementById('betaIntro');
+        if (intro) intro.classList.add('hidden');
+        const game = document.getElementById('betaGame');
+        if (game) game.classList.add('hidden');
+        // Pre-fill the manual join field as a fallback (visible if the
+        // socket join somehow doesn't land).
+        const joinCodeEl = document.getElementById('betaMpJoinCode');
+        if (joinCodeEl) joinCodeEl.value = inviteRoom;
+        const sess = recallSession();
+        const sameRoom = sess.roomId && sess.playerId &&
+          sess.roomId.toUpperCase() === inviteRoom;
+        ensureSocket();
+        if (!sameRoom) {
+          forgetSession();   // drop any stale seat from a different room
+          const nameEl = document.getElementById('betaMpName');
+          socket.emit('beta:joinRoom', {
+            roomId: inviteRoom,
+            name: nameEl ? nameEl.value : '',
+          });
+        }
+        showEntry();   // 'beta:joined' will switch us to the lobby
+        // Strip ?room= so a refresh doesn't re-join.
+        try {
+          const url = new URL(location.href);
+          url.searchParams.delete('room');
+          history.replaceState({}, '', url.toString());
+        } catch (_) {}
+      }
+    } catch (_) {}
   }
 
   if (document.readyState === 'loading') {
