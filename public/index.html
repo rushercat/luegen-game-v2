@@ -1134,7 +1134,10 @@
 <!-- ============ WAITING ROOM ============ -->
 <div id="waitingRoom" class="hidden max-w-2xl mx-auto pt-12 px-4 pb-10">
   <h2 class="text-3xl font-bold mb-1">Waiting Room</h2>
-  <p class="text-emerald-200 mb-6">Room code: <span id="roomCode" class="font-mono text-2xl bg-black/40 px-3 py-1 rounded ml-2"></span></p>
+  <p class="text-emerald-200 mb-6 flex items-center flex-wrap gap-2">
+    <span>Room code: <span id="roomCode" title="Click to copy the invite link" class="font-mono text-2xl bg-black/40 px-3 py-1 rounded ml-2 cursor-pointer hover:bg-black/60 transition"></span></span>
+    <button id="copyInviteBtn" type="button" class="bg-emerald-600 hover:bg-emerald-500 px-3 py-1 rounded text-sm font-bold transition">Copy invite link</button>
+  </p>
   <div id="playerList" class="bg-black/40 p-4 rounded-xl space-y-2 mb-4"></div>
   <button id="startBtn" class="w-full bg-purple-600 hover:bg-purple-700 transition py-3 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed">Start Game</button>
   <p id="hostHint" class="text-center text-xs text-emerald-200 mt-2"></p>

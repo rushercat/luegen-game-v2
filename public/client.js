@@ -510,6 +510,144 @@ $('joinBtn').onclick = () => {
 $('roomCodeInput').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase(); });
 $('startBtn').onclick = () => socket.emit('startGame');
 
+// ---------- Invite link (full URL, not just the room code) ----------
+function inviteUrl() {
+  const code = (($('roomCode') && $('roomCode').textContent) || '').trim();
+  if (!code) return null;
+  return location.origin + location.pathname + '?room=' + encodeURIComponent(code);
+}
+async function copyInvite(btn) {
+  const url = inviteUrl();
+  if (!url) return;
+  try {
+    await navigator.clipboard.writeText(url);
+    if (btn) { const old = btn.textContent; btn.textContent = 'Link copied!'; setTimeout(() => { btn.textContent = old; }, 1500); }
+  } catch (e) {
+    window.prompt('Copy this invite link:', url);
+  }
+}
+if ($('copyInviteBtn')) $('copyInviteBtn').onclick = () => copyInvite($('copyInviteBtn'));
+if ($('roomCode')) $('roomCode').onclick = () => copyInvite($('copyInviteBtn'));
+
+// ---------- Invite-link auto-join (?room=CODE) ----------
+// Opening a shared link drops you straight into that room. If your saved
+// seat is for the same room, the normal resume flow reclaims it; otherwise
+// we drop the stale seat and join fresh. The param is stripped afterward so
+// a refresh doesn't re-join.
+(function inviteAutoJoin() {
+  try {
+    const usp = new URLSearchParams(location.search);
+    const room = (usp.get('room') || '').trim().toUpperCase();
+    if (!room) return;
+    const prevName = (session && session.name) || '';
+    const sameRoom = !!(session && (session.roomId || '').toUpperCase() === room && session.playerId);
+    const nameEl = $('playerName');
+    if (nameEl && prevName && !nameEl.value.trim()) nameEl.value = prevName;
+    const codeEl = $('roomCodeInput');
+    if (codeEl) codeEl.value = room;
+    try { const u = new URL(location.href); u.searchParams.delete('room'); history.replaceState({}, '', u.toString()); } catch (_) {}
+    if (!sameRoom) {
+      clearSession();   // so the 'connect' handler won't resume a different room
+      const joinName = (nameEl && nameEl.value.trim()) || prevName || 'Player';
+      socket.emit('joinRoom', { roomId: room, name: joinName });   // buffered until connected
+    }
+  } catch (_) {}
+})();
+
+// ---------- Turn / pile red alert FX ----------
+// Attention cues: your turn -> the screen edges pulse red (+ the browser tab
+// flashes with a red favicon/title while it's unfocused, so you notice from
+// another tab); pile > 4 -> a red vignette pulses (big pile = high stakes).
+// Honours prefers-reduced-motion (static glow instead of a pulse).
+let _fxTurnEl = null, _fxDangerEl = null, _fxReady = false, _fxMyTurn = false;
+let _titleFlashTimer = null, _origTitle = null, _origFavicon = null, _redFavicon = null;
+function _ensureAlertFx() {
+  if (_fxReady) return;
+  let reduce = false;
+  try { reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) {}
+  const st = document.createElement('style');
+  st.id = 'lugenAlertFxStyle';
+  st.textContent =
+    '.lugenFx{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .25s ease;}' +
+    '#lugenTurnFx{z-index:9998;}' +
+    '#lugenDangerFx{z-index:9997;background:radial-gradient(ellipse at center,rgba(220,38,38,0) 38%,rgba(220,38,38,.45) 100%);}' +
+    '#lugenTurnFx.on{opacity:1;' +
+      (reduce ? 'box-shadow:inset 0 0 70px 18px rgba(239,68,68,.6);'
+              : 'animation:lugenTurnPulse 1.15s ease-in-out infinite;') + '}' +
+    '#lugenDangerFx.on{opacity:1;' + (reduce ? '' : 'animation:lugenDangerPulse .72s ease-in-out infinite;') + '}' +
+    '@keyframes lugenTurnPulse{0%,100%{box-shadow:inset 0 0 40px 8px rgba(239,68,68,.35);}50%{box-shadow:inset 0 0 85px 26px rgba(239,68,68,.8);}}' +
+    '@keyframes lugenDangerPulse{0%,100%{opacity:.4;}50%{opacity:.95;}}';
+  document.head.appendChild(st);
+  _fxDangerEl = document.createElement('div');
+  _fxDangerEl.id = 'lugenDangerFx';
+  _fxDangerEl.className = 'lugenFx';
+  document.body.appendChild(_fxDangerEl);
+  _fxTurnEl = document.createElement('div');
+  _fxTurnEl.id = 'lugenTurnFx';
+  _fxTurnEl.className = 'lugenFx';
+  document.body.appendChild(_fxTurnEl);
+  _fxReady = true;
+}
+function _redFaviconDataUrl() {
+  try {
+    const c = document.createElement('canvas');
+    c.width = 32; c.height = 32;
+    const x = c.getContext('2d');
+    x.fillStyle = '#dc2626';
+    x.beginPath(); x.arc(16, 16, 15, 0, Math.PI * 2); x.fill();
+    x.fillStyle = '#fff';
+    x.font = 'bold 22px sans-serif';
+    x.textAlign = 'center';
+    x.textBaseline = 'middle';
+    x.fillText('!', 16, 18);
+    return c.toDataURL('image/png');
+  } catch (_) { return null; }
+}
+function _faviconLink() {
+  let l = document.querySelector('link[rel~="icon"]');
+  if (!l) { l = document.createElement('link'); l.rel = 'icon'; document.head.appendChild(l); }
+  return l;
+}
+function _startTitleFlash() {
+  if (_titleFlashTimer) return;
+  if (_origTitle == null) _origTitle = document.title;
+  const link = _faviconLink();
+  if (_origFavicon == null) _origFavicon = link.getAttribute('href') || '';
+  if (_redFavicon == null) _redFavicon = _redFaviconDataUrl();
+  let on = false;
+  _titleFlashTimer = setInterval(() => {
+    on = !on;
+    document.title = on ? '🔴 Du bist dran!' : (_origTitle || document.title);
+    if (_redFavicon) link.setAttribute('href', on ? _redFavicon : (_origFavicon || _redFavicon));
+  }, 750);
+}
+function _stopTitleFlash() {
+  if (_titleFlashTimer) { clearInterval(_titleFlashTimer); _titleFlashTimer = null; }
+  if (_origTitle != null) document.title = _origTitle;
+  if (_origFavicon != null) _faviconLink().setAttribute('href', _origFavicon);
+}
+function _updateAlertFx(myTurn, pileSize) {
+  _ensureAlertFx();
+  _fxMyTurn = !!myTurn;
+  if (_fxTurnEl) _fxTurnEl.classList.toggle('on', !!myTurn);
+  if (_fxDangerEl) _fxDangerEl.classList.toggle('on', (Number(pileSize) || 0) > 4);
+  const away = document.hidden || (typeof document.hasFocus === 'function' && !document.hasFocus());
+  if (myTurn && away) _startTitleFlash();
+  else _stopTitleFlash();
+}
+function _clearAlertFx() {
+  _fxMyTurn = false;
+  if (_fxTurnEl) _fxTurnEl.classList.remove('on');
+  if (_fxDangerEl) _fxDangerEl.classList.remove('on');
+  _stopTitleFlash();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { if (_fxMyTurn) _startTitleFlash(); }
+  else _stopTitleFlash();
+});
+window.addEventListener('focus', _stopTitleFlash);
+window.addEventListener('blur', () => { if (_fxMyTurn) _startTitleFlash(); });
+
 function showError(msg) {
   $('errorMsg').textContent = msg;
   setTimeout(() => { if ($('errorMsg').textContent === msg) $('errorMsg').textContent = ''; }, 4000);
@@ -561,6 +699,7 @@ socket.on('reconnectFailed', ({ reason }) => {
   prevHandIds.clear();
   newCardIds.clear();
   roomState = null;
+  _clearAlertFx();
   $('game').classList.add('hidden');
   $('waitingRoom').classList.add('hidden');
   $('gameOver').classList.add('hidden');
@@ -605,6 +744,16 @@ socket.on('roomState', (state) => {
     if (authUser) loadCurrentUser();
   } else $('gameOver').classList.add('hidden');
   $('endGameBtn').classList.toggle('hidden', !(state.started && state.hostId === myId && !state.gameOver));
+  // Red attention FX: pulse on your turn, flash the tab when you're away,
+  // danger vignette once the pile passes 4 cards.
+  if (state.started && !state.gameOver && myId) {
+    const _curFx = state.players && state.players[state.currentTurnIdx];
+    const _meFx = state.players && state.players.find(p => p.id === myId);
+    const _aliveFx = !_meFx || _meFx.alive !== false;
+    _updateAlertFx(!!(_curFx && _curFx.id === myId && _aliveFx), state.pileSize);
+  } else {
+    _clearAlertFx();
+  }
 });
 
 socket.on('hand', (hand) => {
